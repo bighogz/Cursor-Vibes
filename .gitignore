@@ -1,0 +1,9 @@
+.env
+.env.local
+.env.bak
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.csv
+/data/

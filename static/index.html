@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Insider Selling Tracker — S&P 500</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0c10;
+      --surface: #13161d;
+      --border: #252a35;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-dim: #388bfd66;
+      --warning: #f0c14b;
+      --success: #3fb950;
+      --danger: #f85149;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Outfit', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    .layout {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    header {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .sub {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-top: 0.35rem;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+      margin-bottom: 2rem;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .field label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .field input, .field select {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      padding: 0.6rem 0.9rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      width: 140px;
+    }
+    .field input:focus, .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .btn {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 0.65rem 1.4rem;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #79b8ff;
+      transform: translateY(-1px);
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.4rem;
+      font-weight: 600;
+    }
+    .stat-value.warn {
+      color: var(--warning);
+    }
+    .stat-value.success {
+      color: var(--success);
+    }
+    .section {
+      margin-bottom: 2rem;
+    }
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--text-muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th {
+      text-align: left;
+      padding: 0.7rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+    }
+    tr:hover {
+      background: rgba(255,255,255,0.02);
+    }
+    .ticker {
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .z-high {
+      color: var(--warning);
+    }
+    .z-very-high {
+      color: var(--danger);
+    }
+    .empty {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1.5rem;
+      color: var(--text-muted);
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .error {
+      color: var(--danger);
+      padding: 1rem;
+      background: rgba(248,81,73,0.1);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+    .tip {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header>
+      <h1>Insider Selling Tracker</h1>
+      <p class="sub">S&P 500 — signals when selling exceeds normal baseline</p>
+    </header>
+
+    <div class="controls">
+      <div class="field">
+        <label>Tickers (0 = all)</label>
+        <input type="number" id="limit" value="30" min="0" max="503">
+      </div>
+      <div class="field">
+        <label>Baseline days</label>
+        <input type="number" id="baseline" value="365" min="30" max="730">
+      </div>
+      <div class="field">
+        <label>Current window</label>
+        <input type="number" id="current" value="30" min="7" max="90">
+      </div>
+      <div class="field">
+        <label>Z threshold</label>
+        <input type="number" id="std" value="2" min="1" max="5" step="0.5">
+      </div>
+      <button class="btn btn-primary" id="runBtn">Run Scan</button>
+    </div>
+    <p class="tip">FMP free tier ≈250 calls/day. Use 20–30 tickers to stay under limit. "All" (0) uses 500+ FMP calls.</p>
+
+    <div id="stats" class="stats" style="display: none;"></div>
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="loading" class="loading" style="display: none;">
+      <div class="spinner"></div>
+      <span>Fetching insider data… This may take a few minutes.</span>
+    </div>
+
+    <div class="section" id="anomaliesSection" style="display: none;">
+      <h2 class="section-title">Anomalous selling (above normal)</h2>
+      <div id="anomaliesTable"></div>
+    </div>
+
+    <div class="section" id="signalsSection" style="display: none;">
+      <h2 class="section-title">All signals</h2>
+      <div id="signalsTable"></div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
