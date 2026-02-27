@@ -50,3 +50,18 @@ assert r.status_code == 200
         run: |
           go build -o bin/api ./cmd/api
           go build -o bin/scan ./cmd/scan
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release --manifest-path rust-core/Cargo.toml
+
+      - name: Test
+        run: cargo test --manifest-path rust-core/Cargo.toml

@@ -22,13 +22,13 @@ func init() {
 }
 
 func main() {
-	http.HandleFunc("/", serveIndex)
-	http.HandleFunc("/static/", serveStatic)
-	http.HandleFunc("/api/dashboard", handleDashboard)
-	http.HandleFunc("/api/dashboard/refresh", handleRefresh)
-	http.HandleFunc("/api/dashboard/meta", handleMeta)
-	http.HandleFunc("/api/scan", handleScan)
-	http.HandleFunc("/api/health", handleHealth)
+	http.HandleFunc("/", securityHeaders(serveIndex))
+	http.HandleFunc("/static/", securityHeaders(serveStatic))
+	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))
+	http.HandleFunc("/api/dashboard/refresh", securityHeaders(handleRefresh))
+	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
+	http.HandleFunc("/api/scan", securityHeaders(rateLimitScan(handleScan)))
+	http.HandleFunc("/api/health", securityHeaders(handleHealth))
 
 	go startupRefresh()
 
@@ -58,7 +58,17 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request) {
-	path := "static/" + strings.TrimPrefix(r.URL.Path, "/static/")
+	subpath := strings.TrimPrefix(r.URL.Path, "/static/")
+	subpath = strings.TrimPrefix(subpath, "/")
+	if subpath == "" || strings.Contains(subpath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	path := safeStaticPath("static", subpath)
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
 	http.ServeFile(w, r, path)
 }
 
@@ -134,9 +144,9 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 			limit = 0
 		}
 	}
-	baselineDays := parseInt(q.Get("baseline_days"), config.BaselineDays)
-	currentDays := parseInt(q.Get("current_days"), config.CurrentWindowDays)
-	stdThreshold := parseFloat(q.Get("std_threshold"), config.AnomalyStdThreshold)
+	baselineDays := clamp(parseInt(q.Get("baseline_days"), config.BaselineDays), 30, 730)
+	currentDays := clamp(parseInt(q.Get("current_days"), config.CurrentWindowDays), 7, 90)
+	stdThreshold := clampFloat(parseFloat(q.Get("std_threshold"), config.AnomalyStdThreshold), 1.0, 5.0)
 	asOfStr := q.Get("as_of")
 	asOf := time.Now()
 	if asOfStr != "" {
@@ -155,7 +165,8 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if limit > 0 {
-		tickers = tickers[:min(limit, len(tickers))]
+		limit = min(clamp(limit, 1, 600), len(tickers))
+		tickers = tickers[:limit]
 	}
 	totalDays := baselineDays + currentDays
 	dateFrom := asOf.AddDate(0, 0, -totalDays)
@@ -227,4 +238,24 @@ func parseFloat(s string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }

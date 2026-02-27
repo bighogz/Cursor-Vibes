@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 /bin/
 *.exe
+/target/
 .venv/
 venv/
 *.csv

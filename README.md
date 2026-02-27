@@ -2,14 +2,20 @@
 
 Tracks insider selling for all S&P 500 constituents using multiple data providers and flags companies where selling exceeds **normal** levels using a simple statistical baseline.
 
-## Backend
+## Backend (Go + Rust, Python legacy)
 
-Dual-stack backend (Python + Go):
+**Primary: Go + Rust** (performance & security):
 
-- **Python** (FastAPI): REST API, dashboard builder, anomaly detection, API clients (FMP, SEC-API, EODHD, Yahoo). Serves static UI, cached JSON dashboard, and scan endpoint.
-- **Go**: Equivalent HTTP server and CLI; uses Yahoo Finance for quotes/trend/news when FMP free tier is enabled to stay under rate limits.
-- **Data flow**: S&P 500 list → aggregate insider sells (FMP + others) → dedupe → baseline vs current-window z-score → flag anomalies.
-- **Caching**: 24h file-based dashboard cache; background refresh on startup and when stale.
+- **Go** HTTP API: serves static UI, dashboard, scan. Security headers (X-Frame-Options, CSP, etc.), rate limiting, path traversal protection, input validation/clamping.
+- **Rust** `rust-core`: anomaly detection (z-score), memory-safe, zero-cost. Built as library + CLI (`vibes-anomaly`); Go can delegate compute to it.
+- **Data flow**: S&P 500 → aggregate insider sells (FMP) → dedupe → baseline vs current-window z-score → anomalies.
+- **Python** (legacy): FastAPI server still supported for development.
+
+```bash
+# Build all
+make build          # Go + Rust
+go run ./cmd/api    # Start server
+```
 
 ## Data sources
 
