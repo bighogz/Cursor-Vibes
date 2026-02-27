@@ -3,6 +3,8 @@
 .env.bak
 __pycache__/
 *.pyc
+/bin/
+*.exe
 .venv/
 venv/
 *.csv

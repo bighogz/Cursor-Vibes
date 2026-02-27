@@ -86,14 +86,29 @@ Then open **http://localhost:8000** in your browser.
 
 **FMP free tier (250 calls/day):** If price, trend, news, and insiders show as "—", you've likely hit the rate limit. Set `FMP_FREE_TIER=true` in `.env`, delete `data/dashboard_cache.json`, and run `python scripts/prepopulate_cache.py` to rebuild with fewer API calls. You'll get data for ~50 companies instead of 503.
 
-**EODHD fallback:** With `EODHD_API_KEY` set, the dashboard uses EODHD for stock prices when FMP is rate limited. EODHD also supplies insider data (with FMP, SEC-API, Financial Datasets). EODHD free plan: 20 calls/day.
+**EODHD fallback:** With `EODHD_API_KEY` set, the dashboard uses EODHD for stock prices when FMP is rate limited. EODHD also supplies insider data. EODHD free plan: 20 calls/day.
+
+**Yahoo Finance:** With `FMP_FREE_TIER=true`, the dashboard uses Yahoo for quotes, stock trends, and news (no API key). FMP is used only for insider data, keeping you well under 250 calls/day.
 
 **Anomaly Scan** (`/static/index.html`): Run anomaly detection to flag companies where insider selling exceeds normal.
 
+## Go version (optional)
+
+The project includes a Go implementation for better performance:
+
+```bash
+go build -o bin/api ./cmd/api
+./bin/api
+```
+
+Or use the Python server: `python api.py` (or `uvicorn api:app ...`).
+
 ## Project layout
 
-- `main.py` – CLI entrypoint (load S&P 500, aggregate sells, run anomaly detection, print/export).
-- `api.py` – FastAPI server and web UI (POST /api/scan, static frontend).
+- `main.py` – Python CLI (load S&P 500, aggregate sells, run anomaly detection).
+- `api.py` – Python FastAPI server (port 8000).
+- `cmd/api/` – Go HTTP server (equivalent to api.py).
+- `cmd/scan/` – Go CLI (equivalent to main.py).
 - `static/` – Frontend (dashboard.html, index.html, app.js, dashboard.js).
 - `run.py` – Thin wrapper that calls `main.main()`.
 - `src/config.py` – Env and tuning constants.

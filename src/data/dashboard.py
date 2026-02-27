@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 import time
 
 from ..config import FMP_API_KEY, FMP_FREE_TIER, EODHD_API_KEY
-from ..clients import FMPClient, EODHDClient
+from ..clients import FMPClient, EODHDClient, YahooClient
 from ..aggregator import aggregate_insider_sells
 from .sp500_sectors import load_sp500_with_sectors
 
@@ -68,44 +68,61 @@ def build_dashboard(
     date_to = as_of
 
     fmp = FMPClient()
+    yahoo = YahooClient()
     quote_by_sym = {}
     news_by_sym = {}
     hist_by_sym = {}
     insider_records = []
 
-    # Free tier: ~25 API calls total. Paid: full data.
+    # Free tier: use Yahoo for quotes/trend/news (saves FMP for insiders only). Paid: FMP first.
+    use_yahoo_for_quotes = FMP_FREE_TIER or not FMP_API_KEY
     if FMP_FREE_TIER:
-        quote_batch_limit = 1
         sample = 10
         insider_sample = 15
     else:
-        quote_batch_limit = 20
         sample = min(50, len(companies))
         insider_sample = min(80, len(tickers))
 
-    # Batch quotes: FMP first, EODHD as fallback when FMP rate limited
-    batch_size = 50
-    for i in range(0, min(len(tickers), quote_batch_limit * batch_size), batch_size):
-        batch = tickers[i : i + batch_size]
-        quotes = fmp.get_quote(batch)
-        for q in quotes:
-            s = (q.get("symbol") or "").strip()
-            if s:
-                quote_by_sym[s] = q
-        time.sleep(0.2)
-
-    # EODHD fallback for prices when FMP returned nothing (e.g. rate limited)
-    if not quote_by_sym and EODHD_API_KEY:
-        eod = EODHDClient()
-        max_eod = 20 if FMP_FREE_TIER else 100  # EODHD free ≈20 calls/day
-        for i in range(0, min(len(tickers), max_eod), 20):
-            batch = tickers[i : i + 20]
-            eq = eod.get_quote(batch)
-            for q in eq:
+    if use_yahoo_for_quotes and yahoo._available():
+        # Yahoo for quotes (no API key, no rate limit)
+        for i in range(0, min(len(tickers), 50), 10):
+            batch = tickers[i : i + 10]
+            for q in yahoo.get_quote(batch):
                 s = (q.get("symbol") or "").strip()
                 if s:
                     quote_by_sym[s] = q
-            time.sleep(0.15)
+            time.sleep(0.1)
+    else:
+        # FMP quotes, then EODHD fallback, then Yahoo
+        batch_size = 50
+        quote_batch_limit = 20
+        for i in range(0, min(len(tickers), quote_batch_limit * batch_size), batch_size):
+            batch = tickers[i : i + batch_size]
+            quotes = fmp.get_quote(batch)
+            for q in quotes:
+                s = (q.get("symbol") or "").strip()
+                if s:
+                    quote_by_sym[s] = q
+            time.sleep(0.2)
+        if not quote_by_sym and EODHD_API_KEY:
+            eod = EODHDClient()
+            max_eod = 100
+            for i in range(0, min(len(tickers), max_eod), 20):
+                batch = tickers[i : i + 20]
+                eq = eod.get_quote(batch)
+                for q in eq:
+                    s = (q.get("symbol") or "").strip()
+                    if s:
+                        quote_by_sym[s] = q
+                time.sleep(0.15)
+        if not quote_by_sym and yahoo._available():
+            for i in range(0, min(len(tickers), 50), 10):
+                batch = tickers[i : i + 10]
+                for q in yahoo.get_quote(batch):
+                    s = (q.get("symbol") or "").strip()
+                    if s:
+                        quote_by_sym[s] = q
+                time.sleep(0.1)
 
     # Insider sells
     insider_tickers = tickers[:insider_sample]
@@ -113,21 +130,29 @@ def build_dashboard(
         insider_records = aggregate_insider_sells(insider_tickers, date_from=date_from, date_to=date_to)
     top_insiders = _top_insiders_by_ticker(insider_records)
 
+    # Trend and news: use Yahoo when free tier (saves FMP calls)
     q_start, q_end = _quarter_dates(as_of)
-    for c in companies[:sample]:
-        sym = c["symbol"]
-        hist = fmp.get_historical_range(sym, q_start, q_end)
-        hist_by_sym[sym] = _quarter_change(hist)
-        time.sleep(0.05)
 
     for c in companies[:sample]:
         sym = c["symbol"]
-        news = fmp.get_news(sym, limit=2)
+        if use_yahoo_for_quotes and yahoo._available():
+            hist = yahoo.get_historical_range(sym, q_start, q_end)
+        else:
+            hist = fmp.get_historical_range(sym, q_start, q_end)
+        hist_by_sym[sym] = _quarter_change(hist)
+        time.sleep(0.05 if not use_yahoo_for_quotes else 0.08)
+
+    for c in companies[:sample]:
+        sym = c["symbol"]
+        if use_yahoo_for_quotes and yahoo._available():
+            news = yahoo.get_news(sym, limit=2)
+        else:
+            news = fmp.get_news(sym, limit=2)
         news_by_sym[sym] = [
-            {"title": (n.get("title") or "")[:80], "url": n.get("url") or ""}
+            {"title": (n.get("title") or n.get("url") or "")[:80], "url": n.get("url") or n.get("link") or ""}
             for n in (news or [])[:2]
         ]
-        time.sleep(0.05)
+        time.sleep(0.05 if not use_yahoo_for_quotes else 0.08)
 
     # Group by sector
     by_sector = defaultdict(list)
