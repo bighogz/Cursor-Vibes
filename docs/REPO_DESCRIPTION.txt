@@ -1,0 +1,5 @@
+Repository description for GitHub "About" (max ~350 chars):
+
+---
+S&P 500 insider selling tracker with anomaly detection. Dual backend (Python/FastAPI + Go). Aggregates sells from FMP, SEC-API, EODHD; flags unusual activity via z-score; Yahoo for free quotes/trends.
+---

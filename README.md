@@ -2,6 +2,15 @@
 
 Tracks insider selling for all S&P 500 constituents using multiple data providers and flags companies where selling exceeds **normal** levels using a simple statistical baseline.
 
+## Backend
+
+Dual-stack backend (Python + Go):
+
+- **Python** (FastAPI): REST API, dashboard builder, anomaly detection, API clients (FMP, SEC-API, EODHD, Yahoo). Serves static UI, cached JSON dashboard, and scan endpoint.
+- **Go**: Equivalent HTTP server and CLI; uses Yahoo Finance for quotes/trend/news when FMP free tier is enabled to stay under rate limits.
+- **Data flow**: S&P 500 list → aggregate insider sells (FMP + others) → dedupe → baseline vs current-window z-score → flag anomalies.
+- **Caching**: 24h file-based dashboard cache; background refresh on startup and when stale.
+
 ## Data sources
 
 Insider sell data is pulled from:
