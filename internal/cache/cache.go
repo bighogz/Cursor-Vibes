@@ -54,7 +54,7 @@ func Write(data map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath, body, 0644)
+	return os.WriteFile(cachePath, body, 0600)
 }
 
 func CachedAt() *time.Time {

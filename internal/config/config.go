@@ -35,4 +35,6 @@ var (
 	MinBaselinePoints   = 5
 
 	FMPFreeTier = GetBool("FMP_FREE_TIER", "false")
+
+	AdminAPIKey = Get("ADMIN_API_KEY")
 )

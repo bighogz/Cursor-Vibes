@@ -2,11 +2,12 @@ package yahoo
 
 import (
 	"encoding/json"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 )
 
 const quoteURL = "https://query1.finance.yahoo.com/v7/finance/quote"
@@ -24,7 +25,7 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	}
 	symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
 	u := quoteURL + "?symbols=" + url.QueryEscape(symStr)
-	resp, err := http.Get(u)
+	resp, err := httpclient.Default.Get(u)
 	if err != nil {
 		return nil
 	}
@@ -68,7 +69,7 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		period2 = t.Unix()
 	}
 	u := chartURL + "/" + url.PathEscape(ticker) + "?interval=1d&period1=" + strconv.FormatInt(period1, 10) + "&period2=" + strconv.FormatInt(period2, 10)
-	resp, err := http.Get(u)
+	resp, err := httpclient.Default.Get(u)
 	if err != nil {
 		return nil
 	}
@@ -115,7 +116,7 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 		return nil
 	}
 	u := "https://query1.finance.yahoo.com/v1/finance/search?q=" + url.QueryEscape(ticker) + "&quotesCount=0&newsCount=" + strconv.Itoa(min(10, limit))
-	resp, err := http.Get(u)
+	resp, err := httpclient.Default.Get(u)
 	if err != nil {
 		return nil
 	}

@@ -2,8 +2,9 @@ package sp500
 
 import (
 	"encoding/csv"
-	"net/http"
 	"strings"
+
+	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 )
 
 const csvURL = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
@@ -16,7 +17,7 @@ type Company struct {
 }
 
 func Load() []Company {
-	resp, err := http.Get(csvURL)
+	resp, err := httpclient.Default.Get(csvURL)
 	if err != nil {
 		return nil
 	}

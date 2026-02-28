@@ -4,13 +4,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/bighogz/Cursor-Vibes/internal/config"
+	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
 )
 
@@ -30,7 +30,7 @@ func (c *Client) get(path string, params url.Values) (interface{}, error) {
 	}
 	params.Set("apikey", c.APIKey)
 	u := baseURL + path + "?" + params.Encode()
-	resp, err := http.Get(u)
+	resp, err := httpclient.Default.Get(u)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (c *Client) GetSP500Tickers() []string {
 		}
 	}
 	// Fallback: free CSV
-	resp, err := http.Get("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv")
+	resp, err := httpclient.Default.Get("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv")
 	if err != nil {
 		return nil
 	}

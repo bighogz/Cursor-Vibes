@@ -14,6 +14,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/dashboard"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
+	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/joho/godotenv"
 )
 
@@ -25,9 +26,9 @@ func main() {
 	http.HandleFunc("/", securityHeaders(serveIndex))
 	http.HandleFunc("/static/", securityHeaders(serveStatic))
 	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))
-	http.HandleFunc("/api/dashboard/refresh", securityHeaders(handleRefresh))
+	http.HandleFunc("/api/dashboard/refresh", securityHeaders(adminOrRateLimit(handleRefresh)))
 	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
-	http.HandleFunc("/api/scan", securityHeaders(rateLimitScan(handleScan)))
+	http.HandleFunc("/api/scan", securityHeaders(adminOrRateLimit(rateLimitScan(handleScan))))
 	http.HandleFunc("/api/health", securityHeaders(handleHealth))
 
 	go startupRefresh()
@@ -93,10 +94,16 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 var refreshMu sync.Mutex
+var lastRefreshAt time.Time
+const refreshDebounce = 5 * time.Minute
 
 func refreshCache() {
 	refreshMu.Lock()
 	defer refreshMu.Unlock()
+	if !lastRefreshAt.IsZero() && time.Since(lastRefreshAt) < refreshDebounce {
+		return
+	}
+	lastRefreshAt = time.Now()
 	data := dashboard.Build(0, time.Now())
 	if data["error"] == nil {
 		cache.Write(data)
@@ -173,22 +180,45 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	dateTo := asOf
 
 	records := aggregator.AggregateInsiderSells(tickers, dateFrom, dateTo)
-	signals := aggregator.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf)
 
-	signalsList := make([]map[string]interface{}, 0)
-	anomaliesList := make([]map[string]interface{}, 0)
-	for _, s := range signals {
-		m := map[string]interface{}{
-			"ticker":                s.Ticker,
-			"current_shares_sold":   s.CurrentSharesSold,
-			"baseline_mean":         s.BaselineMean,
-			"baseline_std":          s.BaselineStd,
-			"z_score":               s.ZScore,
-			"is_anomaly":            s.IsAnomaly,
+	var signalsList []map[string]interface{}
+	var anomaliesList []map[string]interface{}
+
+	// Use Rust anomaly engine when available; fall back to Go
+	if rustclient.Available() {
+		signals, err := rustclient.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf.Format("2006-01-02"))
+		if err == nil {
+			for _, s := range signals {
+				m := map[string]interface{}{
+					"ticker":                s.Ticker,
+					"current_shares_sold":   s.CurrentSharesSold,
+					"baseline_mean":         s.BaselineMean,
+					"baseline_std":          s.BaselineStd,
+					"z_score":               s.ZScore,
+					"is_anomaly":            s.IsAnomaly,
+				}
+				signalsList = append(signalsList, m)
+				if s.IsAnomaly {
+					anomaliesList = append(anomaliesList, m)
+				}
+			}
 		}
-		signalsList = append(signalsList, m)
-		if s.IsAnomaly {
-			anomaliesList = append(anomaliesList, m)
+	}
+	if len(signalsList) == 0 {
+		goSignals := aggregator.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf)
+		for _, s := range goSignals {
+			m := map[string]interface{}{
+				"ticker":                s.Ticker,
+				"current_shares_sold":   s.CurrentSharesSold,
+				"baseline_mean":         s.BaselineMean,
+				"baseline_std":          s.BaselineStd,
+				"z_score":               s.ZScore,
+				"is_anomaly":            s.IsAnomaly,
+			}
+			signalsList = append(signalsList, m)
+			if s.IsAnomaly {
+				anomaliesList = append(anomaliesList, m)
+			}
 		}
 	}
 

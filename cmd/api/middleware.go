@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bighogz/Cursor-Vibes/internal/config"
 )
 
 // securityHeaders adds security-related HTTP headers.
@@ -20,7 +22,10 @@ func securityHeaders(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// rateLimit limits requests per IP (simple in-memory, per-endpoint).
+const rateLimiterMaxSize = 10000
+const rateLimiterEvictAge = time.Hour
+
+// rateLimit limits requests per IP (simple in-memory, per-endpoint). Map size is capped.
 type rateLimiter struct {
 	mu       sync.Mutex
 	last     map[string]time.Time
@@ -38,6 +43,13 @@ func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
+	if len(rl.last) >= rateLimiterMaxSize {
+		for k, t := range rl.last {
+			if now.Sub(t) > rateLimiterEvictAge {
+				delete(rl.last, k)
+			}
+		}
+	}
 	if t, ok := rl.last[key]; ok && now.Sub(t) < rl.interval {
 		return false
 	}
@@ -55,6 +67,28 @@ func rateLimitScan(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if !scanLimiter.allow(ip) {
 			http.Error(w, `{"error":"rate limit: try again in a few seconds"}`, http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// adminOrRateLimit protects /api/scan and /api/dashboard/refresh when ADMIN_API_KEY is set.
+func adminOrRateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if config.AdminAPIKey == "" {
+			next(w, r)
+			return
+		}
+		key := r.Header.Get("X-Admin-Key")
+		if key == "" {
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				key = strings.TrimPrefix(auth, "Bearer ")
+			}
+		}
+		if key != config.AdminAPIKey {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"admin key required"}`, http.StatusUnauthorized)
 			return
 		}
 		next(w, r)
