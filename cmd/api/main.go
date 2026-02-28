@@ -15,6 +15,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/dashboard"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
+	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 	"github.com/joho/godotenv"
 )
 
@@ -30,6 +31,7 @@ func main() {
 	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
 	http.HandleFunc("/api/scan", securityHeaders(adminOrRateLimit(rateLimitScan(handleScan))))
 	http.HandleFunc("/api/health", securityHeaders(handleHealth))
+	http.HandleFunc("/api/health/providers", securityHeaders(handleProviders))
 
 	go startupRefresh()
 
@@ -86,18 +88,20 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	// When sector or limit specified, build on-demand for companies being viewed
+	// When sector or limit specified, build on-demand (never serve stale cache)
 	if sector != "" || limit > 0 {
-		opts := dashboard.BuildOpts{Sector: sector, Limit: limit, AsOf: time.Now()}
 		if limit <= 0 {
-			opts.Limit = 50
+			limit = 50
 		}
+		opts := dashboard.BuildOpts{Sector: sector, Limit: limit, AsOf: time.Now()}
 		data := dashboard.Build(opts)
+		w.Header().Set("X-Served-From", "on-demand")
 		jsonResponse(w, data)
 		return
 	}
 	cached, ok := cache.Read(true)
 	if ok {
+		w.Header().Set("X-Served-From", "cache")
 		jsonResponse(w, cached)
 		return
 	}
@@ -259,6 +263,14 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func handleProviders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jsonResponse(w, yahoo.ProviderHealth())
 }
 
 func jsonResponse(w http.ResponseWriter, v interface{}) {

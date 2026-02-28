@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -116,6 +117,7 @@ func Build(opts BuildOpts) map[string]interface{} {
 		// a little breathing room; yfinance batch is heavy
 		time.Sleep(150 * time.Millisecond)
 	}
+	log.Printf("dashboard Build: tickers=%d quoteBySym_keys=%d", len(tickers), len(quoteBySym))
 
 	insiderTickers := tickers[:min(insiderSample, len(tickers))]
 	var insiderRecords []models.InsiderSellRecord
@@ -145,8 +147,12 @@ func Build(opts BuildOpts) map[string]interface{} {
 		if qt := quarterTrendFromHist(hist); qt != nil {
 			histBySym[sym] = qt
 		}
+		if i < 3 {
+			log.Printf("dashboard Build: hist ticker[%d]=%s hist_records=%d trend=%v", i, sym, len(hist), histBySym[sym] != nil)
+		}
 		time.Sleep(80 * time.Millisecond)
 	}
+	log.Printf("dashboard Build: trends_computed=%d", len(histBySym))
 	for i := 0; i < trendNewsLimit; i++ {
 		sym := companies[i].Symbol
 		var news []map[string]interface{}

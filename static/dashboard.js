@@ -83,10 +83,11 @@ function escapeHtml(s) {
 
 function buildDashboardUrl() {
   const sector = document.getElementById('sectorFilter').value;
-  const limit = document.getElementById('limitFilter').value;
+  const limit = document.getElementById('limitFilter')?.value?.trim();
   const params = new URLSearchParams();
   if (sector) params.set('sector', sector);
-  if (limit && parseInt(limit, 10) > 0) params.set('limit', limit);
+  const limitNum = limit ? parseInt(limit, 10) : 50;
+  params.set('limit', limitNum > 0 ? limitNum : 50); // always on-demand; bypasses stale cache
   const qs = params.toString();
   return '/api/dashboard' + (qs ? '?' + qs : '');
 }

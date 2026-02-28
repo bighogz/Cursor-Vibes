@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 )
 
@@ -78,7 +79,17 @@ func FromYahooSymbol(s string) string { return fromYahooSymbol(strings.TrimSpace
 
 // YfinanceAvailable returns true if the yfinance script can be used (preferred over HTTP).
 func YfinanceAvailable() bool {
-	return yfinanceScriptPath() != ""
+	return YfinanceScriptPath() != ""
+}
+
+// YfinanceScriptPath returns the path to yahoo_fetch.py, or empty if not found.
+func YfinanceScriptPath() string {
+	return yfinanceScriptPath()
+}
+
+// YfinancePythonPath returns the Python interpreter used for yfinance.
+func YfinancePythonPath() string {
+	return yfinancePython
 }
 
 func yfinanceScriptPath() string {
@@ -106,8 +117,10 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 		norm = append(norm, toYahooSymbol(strings.TrimSpace(s)))
 	}
 	symStr := strings.Join(norm, ",")
-	// Prefer yfinance (works when Yahoo HTTP API returns 401)
-	if script := yfinanceScriptPath(); script != "" {
+	script := yfinanceScriptPath()
+	if script == "" {
+		log.Printf("yahoo quotes: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
+	} else {
 		cmd := exec.Command(yfinancePython, script, "quotes", "--symbols="+symStr)
 		cmd.Dir = filepath.Dir(filepath.Dir(script))
 		out, err := cmd.CombinedOutput()
@@ -167,18 +180,23 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		return nil
 	}
 	ticker = toYahooSymbol(strings.TrimSpace(ticker))
-	// Prefer yfinance
-	if script := yfinanceScriptPath(); script != "" {
+	script := yfinanceScriptPath()
+	if script != "" {
 		cmd := exec.Command(yfinancePython, script, "hist", "--symbol="+ticker, "--from="+fromDate, "--to="+toDate)
 		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.Output()
-		if err == nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("yahoo hist subprocess failed (%s): %v; stderr/stdout: %s", ticker, err, string(out))
+		} else {
 			var data []map[string]interface{}
 			if json.Unmarshal(out, &data) == nil {
 				return data
 			}
 		}
+	} else {
+		log.Printf("yahoo hist: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
 	}
+	// Fallback: direct HTTP
 	period1 := int64(0)
 	period2 := int64(9999999999)
 	if t, err := time.Parse("2006-01-02", fromDate); err == nil {
@@ -240,17 +258,21 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 		return nil
 	}
 	ticker = toYahooSymbol(strings.TrimSpace(ticker))
-	// Prefer yfinance
-	if script := yfinanceScriptPath(); script != "" {
+	script := yfinanceScriptPath()
+	if script != "" {
 		cmd := exec.Command(yfinancePython, script, "news", "--symbol="+ticker, "--limit="+strconv.Itoa(min(10, limit)))
 		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.Output()
-		if err == nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("yahoo news subprocess failed (%s): %v; stderr/stdout: %s", ticker, err, string(out))
+		} else {
 			var data []map[string]interface{}
 			if json.Unmarshal(out, &data) == nil {
 				return data
 			}
 		}
+	} else {
+		log.Printf("yahoo news: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
 	}
 	u := "https://query1.finance.yahoo.com/v1/finance/search?q=" + url.QueryEscape(ticker) + "&quotesCount=0&newsCount=" + strconv.Itoa(min(10, limit))
 	req, err := http.NewRequest("GET", u, nil)
@@ -302,4 +324,72 @@ func getFloat(m map[string]interface{}, keys ...string) float64 {
 		}
 	}
 	return 0
+}
+
+// ProviderHealth returns diagnostic info for /api/health/providers.
+func ProviderHealth() map[string]interface{} {
+	script := YfinanceScriptPath()
+	py := YfinancePythonPath()
+	if script == "" {
+		return map[string]interface{}{
+			"yfinance_script_path": "",
+			"yfinance_python_path": py,
+			"yfinance_import_ok":   false,
+			"yahoo_quotes_ok":      false,
+			"yahoo_hist_ok":        false,
+			"hint":                 "Set VIBES_YAHOO_SCRIPT or run API from repo root so scripts/yahoo_fetch.py is found",
+			"config": map[string]interface{}{
+				"fmp_free_tier": config.FMPFreeTier,
+				"has_fmp_key":   config.FMPAPIKey != "",
+			},
+		}
+	}
+	dir := filepath.Dir(filepath.Dir(script))
+
+	// yfinance import check
+	importOK := false
+	imp := exec.Command(py, "-c", "import yfinance; print('ok')")
+	imp.Dir = dir
+	out, err := imp.CombinedOutput()
+	importOK = err == nil && strings.TrimSpace(string(out)) == "ok"
+
+	// quotes check
+	quotesOK := false
+	quotesOutput := ""
+	cmdQuotes := exec.Command(py, script, "quotes", "--symbols=AAPL")
+	cmdQuotes.Dir = dir
+	outQuotes, errQuotes := cmdQuotes.CombinedOutput()
+	quotesOK = errQuotes == nil
+	quotesOutput = string(outQuotes)
+	if len(quotesOutput) > 200 {
+		quotesOutput = quotesOutput[:200] + "..."
+	}
+
+	// hist check
+	histCloses := 0
+	toDate := time.Now().Format("2006-01-02")
+	fromDate := time.Now().AddDate(0, 0, -92).Format("2006-01-02")
+	cmdHist := exec.Command(py, script, "hist", "--symbol=AAPL", "--from="+fromDate, "--to="+toDate)
+	cmdHist.Dir = dir
+	outHist, errHist := cmdHist.CombinedOutput()
+	if errHist == nil {
+		var data []map[string]interface{}
+		if json.Unmarshal(outHist, &data) == nil {
+			histCloses = len(data)
+		}
+	}
+
+	return map[string]interface{}{
+		"yfinance_script_path": script,
+		"yfinance_python_path": py,
+		"yfinance_import_ok":   importOK,
+		"yahoo_quotes_ok":     quotesOK,
+		"yahoo_quotes_output": quotesOutput,
+		"yahoo_hist_ok":       histCloses > 0,
+		"yahoo_hist_closes":   histCloses,
+		"config": map[string]interface{}{
+			"fmp_free_tier": config.FMPFreeTier,
+			"has_fmp_key":   config.FMPAPIKey != "",
+		},
+	}
 }
