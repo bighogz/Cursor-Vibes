@@ -20,14 +20,19 @@ import (
 
 func main() {
 	config.Load()
-	http.HandleFunc("/", securityHeaders(serveIndex))
-	http.HandleFunc("/static/", securityHeaders(serveStatic))
 	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))
 	http.HandleFunc("/api/dashboard/refresh", securityHeaders(adminOrRateLimit(handleRefresh)))
 	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
 	http.HandleFunc("/api/scan", securityHeaders(adminOrRateLimit(rateLimitScan(handleScan))))
 	http.HandleFunc("/api/health", securityHeaders(handleHealth))
 	http.HandleFunc("/api/health/providers", securityHeaders(handleProviders))
+
+	// Static assets from React build (JS/CSS/images)
+	http.HandleFunc("/assets/", securityHeaders(serveSPAAssets))
+	// Legacy static files
+	http.HandleFunc("/static/", securityHeaders(serveStatic))
+	// SPA catch-all: serves React index.html for all non-API routes
+	http.HandleFunc("/", securityHeaders(serveSPA))
 
 	go startupRefresh()
 
@@ -38,7 +43,24 @@ func main() {
 	http.ListenAndServe(":"+port, nil)
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request) {
+// hasSPABuild returns true when the React frontend has been built.
+func hasSPABuild() bool {
+	_, err := os.Stat("frontend/dist/index.html")
+	return err == nil
+}
+
+func serveSPA(w http.ResponseWriter, r *http.Request) {
+	if hasSPABuild() {
+		// For root or any client-side route, serve the SPA shell
+		path := "frontend/dist" + r.URL.Path
+		if r.URL.Path == "/" || !fileExists(path) {
+			http.ServeFile(w, r, "frontend/dist/index.html")
+			return
+		}
+		http.ServeFile(w, r, path)
+		return
+	}
+	// Fallback to legacy static dashboard
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -53,7 +75,22 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, indexPath)
 		return
 	}
-	jsonResponse(w, map[string]string{"message": "Frontend not found."})
+	jsonResponse(w, map[string]string{"message": "Frontend not found. Run: cd frontend && npm run build"})
+}
+
+func serveSPAAssets(w http.ResponseWriter, r *http.Request) {
+	subpath := strings.TrimPrefix(r.URL.Path, "/assets/")
+	if subpath == "" || strings.Contains(subpath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	path := safeStaticPath("frontend/dist/assets", subpath)
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, path)
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +108,11 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -84,7 +126,6 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	// When sector or limit specified, build on-demand (never serve stale cache)
 	if sector != "" || limit > 0 {
 		if limit <= 0 {
 			limit = 50
@@ -113,6 +154,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 var refreshMu sync.Mutex
 var lastRefreshAt time.Time
+
 const refreshDebounce = 5 * time.Minute
 
 func refreshCache() {
@@ -202,18 +244,17 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	var signalsList []map[string]interface{}
 	var anomaliesList []map[string]interface{}
 
-	// Use Rust anomaly engine when available; fall back to Go
 	if rustclient.Available() {
 		signals, err := rustclient.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf.Format("2006-01-02"))
 		if err == nil {
 			for _, s := range signals {
 				m := map[string]interface{}{
-					"ticker":                s.Ticker,
-					"current_shares_sold":   s.CurrentSharesSold,
-					"baseline_mean":         s.BaselineMean,
-					"baseline_std":          s.BaselineStd,
-					"z_score":               s.ZScore,
-					"is_anomaly":            s.IsAnomaly,
+					"ticker":              s.Ticker,
+					"current_shares_sold": s.CurrentSharesSold,
+					"baseline_mean":       s.BaselineMean,
+					"baseline_std":        s.BaselineStd,
+					"z_score":             s.ZScore,
+					"is_anomaly":          s.IsAnomaly,
 				}
 				signalsList = append(signalsList, m)
 				if s.IsAnomaly {
@@ -226,12 +267,12 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		goSignals := aggregator.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf)
 		for _, s := range goSignals {
 			m := map[string]interface{}{
-				"ticker":                s.Ticker,
-				"current_shares_sold":   s.CurrentSharesSold,
-				"baseline_mean":         s.BaselineMean,
-				"baseline_std":          s.BaselineStd,
-				"z_score":               s.ZScore,
-				"is_anomaly":            s.IsAnomaly,
+				"ticker":              s.Ticker,
+				"current_shares_sold": s.CurrentSharesSold,
+				"baseline_mean":       s.BaselineMean,
+				"baseline_std":        s.BaselineStd,
+				"z_score":             s.ZScore,
+				"is_anomaly":          s.IsAnomaly,
 			}
 			signalsList = append(signalsList, m)
 			if s.IsAnomaly {
@@ -241,19 +282,19 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"tickers_count":   len(tickers),
+		"tickers_count":  len(tickers),
 		"records_count":  len(records),
 		"anomalies_count": len(anomaliesList),
-		"date_from":       dateFrom.Format("2006-01-02"),
-		"date_to":         dateTo.Format("2006-01-02"),
-		"as_of":           asOf.Format("2006-01-02"),
+		"date_from":      dateFrom.Format("2006-01-02"),
+		"date_to":        dateTo.Format("2006-01-02"),
+		"as_of":          asOf.Format("2006-01-02"),
 		"params": map[string]interface{}{
-			"baseline_days":  baselineDays,
-			"current_days":   currentDays,
-			"std_threshold":  stdThreshold,
+			"baseline_days": baselineDays,
+			"current_days":  currentDays,
+			"std_threshold": stdThreshold,
 		},
-		"anomalies":   anomaliesList,
-		"all_signals":  signalsList,
+		"anomalies":  anomaliesList,
+		"all_signals": signalsList,
 	})
 }
 
