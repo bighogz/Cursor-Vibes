@@ -1,34 +1,47 @@
 # S&P 500 Insider Selling Tracker
 
-Real-time tracking of insider selling across all S&P 500 companies with anomaly detection. Built with **Go** and **Rust** -- zero Python runtime dependency.
+Real-time tracking of insider selling across all S&P 500 companies with anomaly detection. Built with **Go**, **Rust**, and a **React** frontend -- zero Python runtime dependency.
 
 Stock prices and quarterly trends are fetched via [go-yfinance](https://github.com/wnjoon/go-yfinance) (native Go with TLS fingerprint spoofing and Yahoo crumb/cookie auth). Anomaly detection and trend computation use a Rust binary for performance, with Go fallbacks when the binary isn't available.
 
 ## Quick start
 
 ```bash
-# Prerequisites: Go 1.22+, Rust (rustup.rs)
+# Prerequisites: Go 1.25+, Node.js 18+, Rust (optional, rustup.rs)
 cp .env.example .env        # add your FMP_API_KEY
-make build                   # builds Go API + Rust binary -> bin/
+make build                   # builds Go API + Rust binary + React frontend
 ./bin/api                    # http://localhost:8000
 ```
 
 ## Architecture
 
 ```
-Go API (cmd/api)
-├── Dashboard builder       → prices, trends, news, insiders
-│   ├── go-yfinance         → Yahoo Finance (quotes, historical)
-│   ├── FMP client          → insider sells, S&P 500 list
-│   └── HTTP fallback       → Yahoo v7/v8 APIs (no auth needed for news)
-├── Rust binary (optional)  → anomaly detection + trend computation
-│   └── Go fallback         → internal/aggregator + internal/trend
-├── Cache layer             → file-based JSON, 24h refresh
-└── Static UI               → dashboard.html + dashboard.js
+┌─────────────────────────────────────────────────────┐
+│  React SPA (frontend/)                              │
+│  ├── AppShell (sidebar + topbar + content)          │
+│  ├── DataTable (keyboard nav, sector groups)        │
+│  ├── DetailDrawer (price, sparkline, news, insiders)│
+│  ├── CommandPalette (⌘K fuzzy search)               │
+│  └── Anomaly Scan page + Settings page              │
+├─────────────────────────────────────────────────────┤
+│  Go API (cmd/api) — port 8000                       │
+│  ├── Dashboard builder  → prices, trends, news      │
+│  │   ├── go-yfinance    → Yahoo Finance (native Go) │
+│  │   ├── FMP client     → insider sells, S&P 500    │
+│  │   └── HTTP fallback  → Yahoo v7/v8 (news)        │
+│  ├── Rust binary        → anomaly + trend compute   │
+│  │   └── Go fallback    → aggregator + trend pkg    │
+│  ├── Cache layer        → file-based JSON, 24h TTL  │
+│  └── Security           → timeouts, rate limits, CSP│
+├─────────────────────────────────────────────────────┤
+│  Rust CLI (rust-core/)                              │
+│  └── vibes-anomaly: anomaly + trend subcommands     │
+└─────────────────────────────────────────────────────┘
 ```
 
 | Component | Language | Purpose |
 |-----------|----------|---------|
+| `frontend/` | React + TypeScript + Tailwind | Linear-inspired SPA with keyboard-first UX |
 | `cmd/api` | Go | HTTP server, routes, middleware, security headers |
 | `cmd/scan` | Go | CLI anomaly scanner |
 | `internal/yahoo` | Go | Yahoo Finance client (go-yfinance + HTTP fallback) |
@@ -40,7 +53,27 @@ Go API (cmd/api)
 | `internal/cache` | Go | File-based dashboard cache |
 | `internal/config` | Go | Environment loading via sync.Once |
 | `rust-core` | Rust | `vibes-anomaly` binary: anomaly + trend subcommands |
-| `static/` | HTML/JS | Dashboard UI with SVG sparklines |
+
+## Frontend
+
+The UI is a Linear-inspired React SPA with:
+
+- **Sidebar**: Navigation + collapsible sector filter groups
+- **DataTable**: Dense rows with sector headers, prices, sparklines, news, insider sellers
+- **DetailDrawer**: Slide-in panel on row click (deep-linkable via `?stock=AAPL`)
+- **CommandPalette**: `⌘K` / `Ctrl+K` fuzzy search across stocks and actions
+- **Keyboard navigation**: `j`/`k` move focus, `Enter` opens drawer, `Esc` closes
+- **Pages**: Dashboard, Anomaly Scan (with configurable params), Settings
+
+Development (with hot reload):
+
+```bash
+# Terminal 1: Go API
+./bin/api
+
+# Terminal 2: Vite dev server (proxies /api to :8000)
+cd frontend && npm run dev    # http://localhost:5173
+```
 
 ## Data sources
 
@@ -56,11 +89,13 @@ At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insid
 
 ## Setup
 
-1. **Install Go** (1.22+): https://go.dev/doc/install
+1. **Install Go** (1.25+): https://go.dev/doc/install
 
-2. **Install Rust** (optional, for faster anomaly/trend): https://rustup.rs
+2. **Install Node.js** (18+): https://nodejs.org
 
-3. **Configure API keys**:
+3. **Install Rust** (optional, for faster anomaly/trend): https://rustup.rs
+
+4. **Configure API keys**:
 
    ```bash
    cp .env.example .env
@@ -68,10 +103,10 @@ At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insid
 
    Edit `.env` and set at least `FMP_API_KEY`. If on FMP's free tier (250 calls/day), also set `FMP_FREE_TIER=true` to prefer Yahoo for quotes and trends.
 
-4. **Build and run**:
+5. **Build and run**:
 
    ```bash
-   make build       # Go binaries + Rust binary -> bin/
+   make build       # Go + Rust + React frontend -> bin/ + frontend/dist/
    ./bin/api        # starts on http://localhost:8000
    ```
 
@@ -91,14 +126,14 @@ At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insid
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Dashboard UI |
+| GET | `/` | React SPA (falls back to legacy dashboard if not built) |
 | GET | `/api/dashboard` | Dashboard JSON (cached) |
 | GET | `/api/dashboard?sector=...&limit=...` | On-demand build, bypasses cache |
 | POST | `/api/dashboard/refresh` | Force cache rebuild |
 | GET | `/api/dashboard/meta` | Metadata (available sectors) |
 | GET | `/api/health` | Health check |
 | GET | `/api/health/providers` | Provider diagnostics (Yahoo, FMP status) |
-| GET | `/api/scan` | Run anomaly detection |
+| POST | `/api/scan` | Run anomaly detection |
 
 ## Anomaly detection
 
@@ -120,61 +155,69 @@ The Rust binary (`vibes-anomaly anomaly`) handles this computation when availabl
 The dashboard shows all S&P 500 companies grouped by GICS sector, with:
 
 - **Price**: Current stock price (Yahoo Finance)
+- **Change**: Daily percentage change (green/red badge)
 - **Quarterly Trend**: 13-week return with inline SVG sparkline
 - **News**: Recent headlines from Yahoo search
-- **Top Insider Sellers**: From FMP insider transaction data
+- **Top Insider Sellers**: Name + shares sold from FMP insider data
 
-Data is pre-built on server startup and cached for 24 hours. The frontend always sends `limit=50` by default to trigger an on-demand build with fresh data.
+Click any row to open the detail drawer with expanded sparkline, full news list, and insider table. Selection is preserved in the URL (`?stock=AAPL`).
 
 ## Project layout
 
 ```
-cmd/api/            Go HTTP server (dashboard, health, scan)
-cmd/scan/           Go CLI (anomaly scanner)
+frontend/               React + TypeScript + Tailwind SPA
+  src/components/       AppShell, SidebarNav, DataTable, DetailDrawer, CommandPalette
+  src/pages/            Dashboard, Scan, Settings
+  src/lib/              API client, formatters
+cmd/api/                Go HTTP server (dashboard, health, scan)
+cmd/scan/               Go CLI (anomaly scanner)
 internal/
-  aggregator/       Z-score anomaly detection (Go fallback)
-  cache/            File-based JSON cache
-  config/           Environment loading (sync.Once)
-  dashboard/        Dashboard builder
-  fmp/              FMP API client
-  httpclient/       Shared HTTP client
-  models/           InsiderSellRecord struct
-  rustclient/       Go<->Rust subprocess bridge
-  sp500/            S&P 500 company data
-  trend/            Quarterly trend math (Go fallback)
-  yahoo/            Yahoo Finance client (go-yfinance)
+  aggregator/           Z-score anomaly detection (Go fallback)
+  cache/                File-based JSON cache
+  config/               Environment loading (sync.Once)
+  dashboard/            Dashboard builder
+  fmp/                  FMP API client
+  httpclient/           Shared HTTP client with timeouts
+  models/               InsiderSellRecord struct
+  rustclient/           Go<->Rust subprocess bridge
+  sp500/                S&P 500 company data
+  trend/                Quarterly trend math (Go fallback)
+  yahoo/                Yahoo Finance client (go-yfinance)
 rust-core/
-  src/main.rs       CLI: anomaly + trend subcommands
-  src/anomaly.rs    Z-score detection
-  src/trend.rs      Quarterly trend (linear regression)
-  src/models.rs     InsiderSellRecord
-static/             Dashboard UI (HTML/JS/CSS)
-docs/               Security audit, API call docs
+  src/main.rs           CLI: anomaly + trend subcommands
+  src/anomaly.rs        Z-score detection
+  src/trend.rs          Quarterly trend (linear regression)
+  src/models.rs         InsiderSellRecord
+static/                 Legacy dashboard UI (fallback)
+docs/                   Security audit, API call docs
 ```
 
 ## Security
 
-- HTTP security headers (CSP, X-Frame-Options, X-Content-Type-Options)
-- Rate limiting on scan endpoint
-- Path traversal protection on static file serving
-- Cache files written with mode 0600
-- 5-minute refresh debounce
-- Optional `ADMIN_API_KEY` for protected endpoints
-- `VIBES_ANOMALY_BIN` path validation (must be under project root)
-- Concurrent Yahoo request limiter (semaphore, cap 8)
-- All config loaded via explicit `config.Load()` with `sync.Once`
+- **HTTP server hardening**: ReadHeaderTimeout (10s), ReadTimeout (30s), WriteTimeout (120s), IdleTimeout (60s)
+- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **Rate limiting**: Scan endpoint (1 req/5s per IP), refresh debounce (5 min)
+- **Path traversal protection**: Static file serving validates paths under allowed directories
+- **Cache security**: Files written with mode 0600
+- **Auth**: Optional `ADMIN_API_KEY` for protected endpoints (scan, refresh)
+- **Binary validation**: `VIBES_ANOMALY_BIN` must be under project root
+- **Concurrency control**: Yahoo request semaphore (cap 8)
+- **Config isolation**: All config loaded via explicit `config.Load()` with `sync.Once`
+- **Dependency scanning**: govulncheck, cargo-audit, osv-scanner -- 0 known vulnerabilities
 
 See [docs/SECURITY_PERFORMANCE_AUDIT.md](docs/SECURITY_PERFORMANCE_AUDIT.md) for the full audit.
 
 ## Build targets
 
 ```bash
-make build        # Go + Rust binaries
-make go-build     # Go only
-make rust-build   # Rust only
-make go-run       # Build + run API
-make deps         # go mod download + tidy
-make clean        # Remove bin/ and rust-core/target/
+make build          # Go + Rust + React frontend (full build)
+make go-build       # Go binaries only
+make rust-build     # Rust binary only
+make frontend       # React frontend only (npm install + build)
+make frontend-dev   # Vite dev server with hot reload
+make go-run         # Build Go + run API
+make deps           # go mod download + npm install
+make clean          # Remove bin/, rust-core/target/, frontend/dist/
 ```
 
 ## Disclaimer
