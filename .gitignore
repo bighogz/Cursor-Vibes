@@ -13,4 +13,5 @@ venv/
 /data/
 frontend/node_modules/
 frontend/dist/
+*.tsbuildinfo
 .DS_Store
