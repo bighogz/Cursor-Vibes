@@ -6,15 +6,20 @@ Tracks insider selling for all S&P 500 constituents using multiple data provider
 
 **Primary: Go + Rust** (performance & security):
 
-- **Go** HTTP API: serves static UI, dashboard, scan. Security headers (X-Frame-Options, CSP, etc.), rate limiting, path traversal protection, input validation/clamping.
-- **Rust** `rust-core`: anomaly detection (z-score), memory-safe, zero-cost. Built as library + CLI (`vibes-anomaly`); Go can delegate compute to it.
+- **Go** HTTP API: serves static UI, dashboard, scan. Security headers (X-Frame-Options, CSP, etc.), rate limiting, path traversal protection, input validation/clamping. HTTP timeouts (30s), shared client, cache debounce (5 min).
+- **Rust** `rust-core`: anomaly detection (z-score), memory-safe, zero-cost. Built as CLI (`vibes-anomaly`); Go API and `cmd/scan` delegate to it when available, otherwise fall back to Go implementation.
 - **Data flow**: S&P 500 → aggregate insider sells (FMP) → dedupe → baseline vs current-window z-score → anomalies.
 - **Python** (legacy): FastAPI server still supported for development.
 
 ```bash
-# Build all
-make build          # Go + Rust
-go run ./cmd/api    # Start server
+# Build Go + Rust
+make build          # Builds Go API, scan CLI, and vibes-anomaly (→ bin/)
+
+# Run API server (port 8000)
+make go-run         # or: ./bin/api
+
+# Run anomaly scan (CLI)
+./bin/scan --baseline-days 365 --current-days 30 --list-all-signals
 ```
 
 ## Data sources
@@ -55,6 +60,12 @@ Tunable via `.env` or CLI: `BASELINE_DAYS`, `CURRENT_WINDOW_DAYS`, `ANOMALY_STD_
    - [EODHD](https://eodhd.com/) → `EODHD_API_KEY`
 
    Leave a key empty to skip that provider.
+
+4. **Optional Go/Rust env vars**
+
+   - `FMP_FREE_TIER=true` – Use Yahoo for quotes/trends/news to save FMP calls (250/day limit).
+   - `ADMIN_API_KEY` – When set, protects `/api/scan` and `/api/dashboard/refresh`. Send `X-Admin-Key: <key>` or `Authorization: Bearer <key>`.
+   - `VIBES_ANOMALY_BIN` – Absolute path to `vibes-anomaly` binary (must be under project root). By default, the binary is auto-discovered in `bin/` or `rust-core/target/release/`.
 
 ## Usage
 
@@ -107,29 +118,34 @@ Then open **http://localhost:8000** in your browser.
 
 **Anomaly Scan** (`/static/index.html`): Run anomaly detection to flag companies where insider selling exceeds normal.
 
-## Go version (optional)
+## Go API and CLI
 
-The project includes a Go implementation for better performance:
+The primary backend is Go + Rust:
 
 ```bash
-go build -o bin/api ./cmd/api
-./bin/api
+make build       # Go API, scan CLI, vibes-anomaly
+make go-run      # ./bin/api
+./bin/scan       # Anomaly scan CLI
 ```
 
-Or use the Python server: `python api.py` (or `uvicorn api:app ...`).
+The scan CLI uses the Rust `vibes-anomaly` binary when found (in `bin/` or `rust-core/target/release/`), otherwise falls back to the Go implementation.
+
+**Python** (`api.py`, `main.py`) remains available for development.
 
 ## Project layout
 
-- `main.py` – Python CLI (load S&P 500, aggregate sells, run anomaly detection).
-- `api.py` – Python FastAPI server (port 8000).
-- `cmd/api/` – Go HTTP server (equivalent to api.py).
-- `cmd/scan/` – Go CLI (equivalent to main.py).
+- `cmd/api/` – Go HTTP server (dashboard, scan API, static UI).
+- `cmd/scan/` – Go CLI (S&P 500 scan with anomaly detection).
+- `internal/` – Go packages: `config`, `fmp`, `yahoo`, `sp500`, `aggregator`, `dashboard`, `cache`, `rustclient`, `httpclient`.
+- `rust-core/` – Rust anomaly engine (`vibes-anomaly` binary).
 - `static/` – Frontend (dashboard.html, index.html, app.js, dashboard.js).
-- `run.py` – Thin wrapper that calls `main.main()`.
-- `src/config.py` – Env and tuning constants.
-- `src/models.py` – `InsiderSellRecord` and shared types.
-- `src/clients/` – API clients: `fmp`, `sec_api`, `eodhd`, `financial_datasets`.
-- `src/aggregator.py` – Aggregation (dedupe across APIs) and anomaly logic (baseline vs current window).
+- `main.py`, `api.py` – Python CLI and FastAPI server (legacy).
+- `src/` – Python modules (config, models, clients, aggregator).
+- `docs/` – [Security & performance audit](docs/SECURITY_PERFORMANCE_AUDIT.md), API call breakdown.
+
+## Security
+
+The Go API includes: HTTP timeouts (30s), shared client reuse, rate limiting (scan endpoint), path traversal protection, cache file mode 0600, 5‑min refresh debounce, optional `ADMIN_API_KEY` for scan/refresh. See [docs/SECURITY_PERFORMANCE_AUDIT.md](docs/SECURITY_PERFORMANCE_AUDIT.md) for details.
 
 ## Disclaimer
 
