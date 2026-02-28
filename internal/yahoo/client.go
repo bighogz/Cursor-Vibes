@@ -2,6 +2,7 @@ package yahoo
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 )
+
+// User-Agent required: Yahoo blocks generic clients (401/429)
+const yahooUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 const quoteURL = "https://query1.finance.yahoo.com/v7/finance/quote"
 const chartURL = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -24,8 +28,15 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 		return nil
 	}
 	symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
-	u := quoteURL + "?symbols=" + url.QueryEscape(symStr)
-	resp, err := httpclient.Default.Get(u)
+	req, err := http.NewRequest("GET", quoteURL+"?symbols="+url.QueryEscape(symStr), nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", yahooUserAgent)
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
@@ -69,7 +80,15 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		period2 = t.Unix()
 	}
 	u := chartURL + "/" + url.PathEscape(ticker) + "?interval=1d&period1=" + strconv.FormatInt(period1, 10) + "&period2=" + strconv.FormatInt(period2, 10)
-	resp, err := httpclient.Default.Get(u)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", yahooUserAgent)
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
@@ -116,7 +135,15 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 		return nil
 	}
 	u := "https://query1.finance.yahoo.com/v1/finance/search?q=" + url.QueryEscape(ticker) + "&quotesCount=0&newsCount=" + strconv.Itoa(min(10, limit))
-	resp, err := httpclient.Default.Get(u)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", yahooUserAgent)
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
