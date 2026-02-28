@@ -7,7 +7,7 @@ Stock prices and quarterly trends are fetched via [go-yfinance](https://github.c
 ## Quick start
 
 ```bash
-# Prerequisites: Go 1.25+, Node.js 18+, Rust (optional, rustup.rs)
+# Prerequisites: Go 1.23+, Node.js 18+, Rust (optional, rustup.rs)
 cp .env.example .env        # add your FMP_API_KEY
 make build                   # builds Go API + Rust binary + React frontend
 ./bin/api                    # http://localhost:8000
@@ -89,7 +89,7 @@ At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insid
 
 ## Setup
 
-1. **Install Go** (1.25+): https://go.dev/doc/install
+1. **Install Go** (1.23+): https://go.dev/doc/install
 
 2. **Install Node.js** (18+): https://nodejs.org
 
