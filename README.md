@@ -95,19 +95,33 @@ At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insid
 
 3. **Install Rust** (optional, for faster anomaly/trend): https://rustup.rs
 
-4. **Configure API keys**:
+4. **Configure API keys** (choose one):
+
+   **Option A — `.env` file** (simple):
 
    ```bash
    cp .env.example .env
+   # Edit .env and set at least FMP_API_KEY
    ```
 
-   Edit `.env` and set at least `FMP_API_KEY`. If on FMP's free tier (250 calls/day), also set `FMP_FREE_TIER=true` to prefer Yahoo for quotes and trends.
+   **Option B — 1Password CLI** (no plaintext secrets on disk):
+
+   ```bash
+   brew install 1password-cli   # one-time
+   op signin                    # authenticate
+   # Edit .env.tpl to point op:// URIs to your vault items
+   make go-run-op               # injects secrets at runtime
+   ```
+
+   If on FMP's free tier (250 calls/day), set `FMP_FREE_TIER=true` to prefer Yahoo for quotes and trends.
 
 5. **Build and run**:
 
    ```bash
    make build       # Go + Rust + React frontend -> bin/ + frontend/dist/
    ./bin/api        # starts on http://localhost:8000
+   # Or with 1Password:
+   make go-run-op   # op run injects secrets, no .env needed
    ```
 
 ## Configuration
@@ -247,6 +261,7 @@ make rust-build     # Rust binary only
 make frontend       # React frontend only (npm install + build)
 make frontend-dev   # Vite dev server with hot reload
 make go-run         # Build Go + run API
+make go-run-op      # Build Go + run API with 1Password secrets injection
 make deps           # go mod download + npm install
 make clean          # Remove bin/, rust-core/target/, frontend/dist/
 ```

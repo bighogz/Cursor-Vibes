@@ -1,4 +1,4 @@
-.PHONY: build go-build rust-build go-run go-scan deps clean frontend frontend-dev
+.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev
 
 build: go-build rust-build frontend
 
@@ -19,6 +19,11 @@ frontend-dev:
 
 go-run: go-build
 	./bin/api
+
+# Inject secrets from 1Password at runtime — no plaintext .env on disk
+# Requires: brew install 1password-cli && op signin
+go-run-op: go-build
+	op run --env-file=.env.tpl -- ./bin/api
 
 go-scan: go-build
 	./bin/scan
