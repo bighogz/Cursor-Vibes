@@ -114,7 +114,7 @@ async function loadDashboard() {
               <th>Symbol</th>
               <th>Company</th>
               <th>Price</th>
-              <th>Q Trend</th>
+              <th>Quarterly Trend</th>
               <th>Recent News</th>
               <th>Top Insider Sellers</th>
             </tr>

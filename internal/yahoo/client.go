@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,10 +26,66 @@ func New() *Client {
 	return &Client{}
 }
 
+var yfinancePython string
+
+func init() {
+	// Prefer venv Python (has yfinance)
+	if p := os.Getenv("VIBES_YAHOO_PYTHON"); p != "" {
+		yfinancePython = p
+		return
+	}
+	cwd, _ := os.Getwd()
+	execPath, _ := os.Executable()
+	execDir := filepath.Dir(execPath)
+	for _, base := range []string{cwd, execDir, filepath.Join(execDir, "..")} {
+		venv := filepath.Join(base, ".venv", "bin", "python3")
+		if _, err := os.Stat(venv); err == nil {
+			yfinancePython = venv
+			return
+		}
+	}
+	yfinancePython = "python3"
+}
+
+// YfinanceAvailable returns true if the yfinance script can be used (preferred over HTTP).
+func YfinanceAvailable() bool {
+	return yfinanceScriptPath() != ""
+}
+
+func yfinanceScriptPath() string {
+	if p := os.Getenv("VIBES_YAHOO_SCRIPT"); p != "" {
+		return p
+	}
+	cwd, _ := os.Getwd()
+	execPath, _ := os.Executable()
+	execDir := filepath.Dir(execPath)
+	for _, base := range []string{cwd, execDir, filepath.Join(execDir, "..")} {
+		p := filepath.Join(base, "scripts", "yahoo_fetch.py")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	if len(symbols) == 0 {
 		return nil
 	}
+	// Prefer yfinance (works when Yahoo HTTP API returns 401)
+	if script := yfinanceScriptPath(); script != "" {
+		symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
+		cmd := exec.Command(yfinancePython, script, "quotes", "--symbols="+symStr)
+		cmd.Dir = filepath.Dir(filepath.Dir(script))
+		out, err := cmd.Output()
+		if err == nil {
+			var data []map[string]interface{}
+			if json.Unmarshal(out, &data) == nil && len(data) > 0 {
+				return data
+			}
+		}
+	}
+	// Fallback: direct HTTP (may return 401)
 	symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
 	req, err := http.NewRequest("GET", quoteURL+"?symbols="+url.QueryEscape(symStr), nil)
 	if err != nil {
@@ -34,9 +93,6 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	}
 	req.Header.Set("User-Agent", yahooUserAgent)
 	resp, err := httpclient.Default.Do(req)
-	if err != nil {
-		return nil
-	}
 	if err != nil {
 		return nil
 	}
@@ -71,6 +127,18 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 	if ticker == "" {
 		return nil
 	}
+	// Prefer yfinance
+	if script := yfinanceScriptPath(); script != "" {
+		cmd := exec.Command(yfinancePython, script, "hist", "--symbol="+ticker, "--from="+fromDate, "--to="+toDate)
+		cmd.Dir = filepath.Dir(filepath.Dir(script))
+		out, err := cmd.Output()
+		if err == nil {
+			var data []map[string]interface{}
+			if json.Unmarshal(out, &data) == nil {
+				return data
+			}
+		}
+	}
 	period1 := int64(0)
 	period2 := int64(9999999999)
 	if t, err := time.Parse("2006-01-02", fromDate); err == nil {
@@ -86,9 +154,6 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 	}
 	req.Header.Set("User-Agent", yahooUserAgent)
 	resp, err := httpclient.Default.Do(req)
-	if err != nil {
-		return nil
-	}
 	if err != nil {
 		return nil
 	}
@@ -134,6 +199,18 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 	if ticker == "" {
 		return nil
 	}
+	// Prefer yfinance
+	if script := yfinanceScriptPath(); script != "" {
+		cmd := exec.Command(yfinancePython, script, "news", "--symbol="+ticker, "--limit="+strconv.Itoa(min(10, limit)))
+		cmd.Dir = filepath.Dir(filepath.Dir(script))
+		out, err := cmd.Output()
+		if err == nil {
+			var data []map[string]interface{}
+			if json.Unmarshal(out, &data) == nil {
+				return data
+			}
+		}
+	}
 	u := "https://query1.finance.yahoo.com/v1/finance/search?q=" + url.QueryEscape(ticker) + "&quotesCount=0&newsCount=" + strconv.Itoa(min(10, limit))
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
@@ -141,9 +218,6 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 	}
 	req.Header.Set("User-Agent", yahooUserAgent)
 	resp, err := httpclient.Default.Do(req)
-	if err != nil {
-		return nil
-	}
 	if err != nil {
 		return nil
 	}

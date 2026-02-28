@@ -39,44 +39,33 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 
 	quoteBySym := make(map[string]map[string]interface{})
 	yahooClient := yahoo.New()
-	useYahooForQuotes := config.FMPFreeTier || config.FMPAPIKey == ""
+	fmpClient := fmp.New()
+	providerStatus := make(map[string]string)
 
-	// Free tier: use Yahoo for quotes (saves FMP calls). Paid: FMP first, Yahoo fallback.
-	if useYahooForQuotes {
-		for i := 0; i < min(len(tickers), 50); i += 10 {
-			batch := tickers[i:min(i+10, len(tickers))]
-			quotes := yahooClient.GetQuote(batch)
-			for _, q := range quotes {
-				if sym, ok := q["symbol"].(string); ok && sym != "" {
-					quoteBySym[strings.TrimSpace(sym)] = q
-				}
+	// Try FMP first when key present; fall back to Yahoo on rate limit or error.
+	useYahooForQuotes := config.FMPAPIKey == ""
+	for i := 0; i < min(len(tickers), 50); i += 10 {
+		batch := tickers[i:min(i+10, len(tickers))]
+		var quotes []map[string]interface{}
+		if !useYahooForQuotes && config.FMPAPIKey != "" {
+			quotes = fmpClient.GetQuote(batch)
+			if len(quotes) == 0 {
+				useYahooForQuotes = true
+				providerStatus["fmp"] = "rate_limited"
+				quotes = yahooClient.GetQuote(batch)
 			}
-			time.Sleep(100 * time.Millisecond)
+		} else {
+			quotes = yahooClient.GetQuote(batch)
 		}
-	} else {
-		fmpClient := fmp.New()
-		batchLimit, batchSize := 20, 50
-		for i := 0; i < min(len(tickers), batchLimit*batchSize); i += batchSize {
-			batch := tickers[i:min(i+batchSize, len(tickers))]
-			quotes := fmpClient.GetQuote(batch)
-			for _, q := range quotes {
-				if sym, ok := q["symbol"].(string); ok && sym != "" {
-					quoteBySym[strings.TrimSpace(sym)] = q
-				}
+		for _, q := range quotes {
+			if sym, ok := q["symbol"].(string); ok && sym != "" {
+				quoteBySym[strings.TrimSpace(sym)] = q
 			}
+		}
+		if !useYahooForQuotes {
 			time.Sleep(200 * time.Millisecond)
-		}
-		if len(quoteBySym) == 0 {
-			for i := 0; i < min(len(tickers), 50); i += 10 {
-				batch := tickers[i:min(i+10, len(tickers))]
-				quotes := yahooClient.GetQuote(batch)
-				for _, q := range quotes {
-					if sym, ok := q["symbol"].(string); ok && sym != "" {
-						quoteBySym[strings.TrimSpace(sym)] = q
-					}
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
+		} else {
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 
@@ -93,15 +82,17 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 
 	histBySym := make(map[string]*float64)
 	newsBySym := make(map[string][]map[string]interface{})
-	fmpClient := fmp.New()
 
 	for i := 0; i < sample && i < len(companies); i++ {
 		sym := companies[i].Symbol
 		var hist []map[string]interface{}
 		if useYahooForQuotes {
 			hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
-		} else if config.FMPAPIKey != "" {
+		} else {
 			hist = fmpClient.GetHistoricalRange(sym, qStartStr, qEndStr)
+			if len(hist) == 0 {
+				hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
+			}
 		}
 		if chg := quarterChange(hist); chg != nil {
 			histBySym[sym] = chg
@@ -113,8 +104,11 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 		var news []map[string]interface{}
 		if useYahooForQuotes {
 			news = yahooClient.GetNews(sym, 2)
-		} else if config.FMPAPIKey != "" {
+		} else {
 			news = fmpClient.GetNews(sym, 2)
+			if len(news) == 0 {
+				news = yahooClient.GetNews(sym, 2)
+			}
 		}
 		formatted := make([]map[string]interface{}, 0)
 		for j, n := range news {
@@ -156,14 +150,27 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 		if sector == "" {
 			sector = "Unknown"
 		}
+		priceSrc := "yahoo"
+		if !useYahooForQuotes {
+			priceSrc = "fmp"
+		}
+		newsSrc := "none"
+		if len(newsBySym[sym]) > 0 {
+			newsSrc = priceSrc
+		}
+		insiderSrc := "none"
+		if len(topInsiders[sym]) > 0 {
+			insiderSrc = "fmp"
+		}
 		bySector[sector] = append(bySector[sector], map[string]interface{}{
-			"symbol":        sym,
-			"name":          c.Name,
-			"price":         pricePtr,
-			"change_pct":    chgPtr,
-			"quarter_trend": histBySym[sym],
-			"news":          newsBySym[sym],
-			"top_insiders":  topInsiders[sym],
+			"symbol":         sym,
+			"name":           c.Name,
+			"price":          pricePtr,
+			"change_pct":     chgPtr,
+			"quarter_trend":  histBySym[sym],
+			"news":           newsBySym[sym],
+			"top_insiders":   topInsiders[sym],
+			"sources":        map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
 		})
 	}
 
@@ -180,11 +187,15 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 		})
 	}
 
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"as_of":           asOf.Format("2006-01-02"),
 		"total_companies": len(companies),
 		"sectors":         sectors,
 	}
+	if len(providerStatus) > 0 {
+		out["provider_status"] = providerStatus
+	}
+	return out
 }
 
 func quarterChange(hist []map[string]interface{}) *float64 {
