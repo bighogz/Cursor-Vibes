@@ -85,8 +85,9 @@ func Build(opts BuildOpts) map[string]interface{} {
 	fmpClient := fmp.New()
 	providerStatus := make(map[string]string)
 
-	// Try FMP first when key present; fall back to Yahoo on rate limit or error.
-	useYahooForQuotes := config.FMPAPIKey == ""
+	// Use Yahoo for quotes when no FMP key or on FMP free tier (avoid rate limit).
+	// Otherwise try FMP first; fall back to Yahoo on rate limit or error.
+	useYahooForQuotes := config.FMPAPIKey == "" || config.FMPFreeTier
 	batchSize := 100 // both fmpClient.GetQuote and yahooClient.GetQuote support up to 100
 
 	for i := 0; i < len(tickers); i += batchSize {

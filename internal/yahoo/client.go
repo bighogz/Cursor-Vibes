@@ -2,6 +2,7 @@ package yahoo
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,8 +110,10 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	if script := yfinanceScriptPath(); script != "" {
 		cmd := exec.Command(yfinancePython, script, "quotes", "--symbols="+symStr)
 		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.Output()
-		if err == nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("yahoo quotes subprocess failed: %v; stderr/stdout: %s", err, string(out))
+		} else {
 			var data []map[string]interface{}
 			if json.Unmarshal(out, &data) == nil && len(data) > 0 {
 				for _, q := range data {
