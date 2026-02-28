@@ -1,1 +1,1 @@
-S&P 500 insider selling tracker with anomaly detection. Go + Rust backend, Yahoo Finance via go-yfinance, SVG sparkline dashboard. Zero Python runtime.
+S&P 500 insider selling tracker with anomaly detection. Go + Rust backend, React frontend. Aggregates sells from FMP, SEC-API, EODHD; flags unusual activity via z-score; Yahoo Finance for quotes/trends. NIST 800-53 aligned security controls.
