@@ -47,6 +47,34 @@ func init() {
 	yfinancePython = "python3"
 }
 
+func toYahooSymbol(sym string) string {
+	switch sym {
+	case "BRK.B":
+		return "BRK-B"
+	case "BF.B":
+		return "BF-B"
+	default:
+		return sym
+	}
+}
+
+func fromYahooSymbol(sym string) string {
+	switch sym {
+	case "BRK-B":
+		return "BRK.B"
+	case "BF-B":
+		return "BF.B"
+	default:
+		return sym
+	}
+}
+
+// ToYahooSymbol converts S&P 500 symbols to Yahoo format: BRK.B -> BRK-B
+func ToYahooSymbol(s string) string { return toYahooSymbol(strings.TrimSpace(s)) }
+
+// FromYahooSymbol converts Yahoo symbols back: BRK-B -> BRK.B
+func FromYahooSymbol(s string) string { return fromYahooSymbol(strings.TrimSpace(s)) }
+
 // YfinanceAvailable returns true if the yfinance script can be used (preferred over HTTP).
 func YfinanceAvailable() bool {
 	return yfinanceScriptPath() != ""
@@ -72,21 +100,29 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	if len(symbols) == 0 {
 		return nil
 	}
+	norm := make([]string, 0, len(symbols))
+	for _, s := range symbols[:min(100, len(symbols))] {
+		norm = append(norm, toYahooSymbol(strings.TrimSpace(s)))
+	}
+	symStr := strings.Join(norm, ",")
 	// Prefer yfinance (works when Yahoo HTTP API returns 401)
 	if script := yfinanceScriptPath(); script != "" {
-		symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
 		cmd := exec.Command(yfinancePython, script, "quotes", "--symbols="+symStr)
 		cmd.Dir = filepath.Dir(filepath.Dir(script))
 		out, err := cmd.Output()
 		if err == nil {
 			var data []map[string]interface{}
 			if json.Unmarshal(out, &data) == nil && len(data) > 0 {
+				for _, q := range data {
+					if sym, ok := q["symbol"].(string); ok && sym != "" {
+						q["symbol"] = fromYahooSymbol(sym)
+					}
+				}
 				return data
 			}
 		}
 	}
 	// Fallback: direct HTTP (may return 401)
-	symStr := strings.Join(symbols[:min(100, len(symbols))], ",")
 	req, err := http.NewRequest("GET", quoteURL+"?symbols="+url.QueryEscape(symStr), nil)
 	if err != nil {
 		return nil
@@ -115,7 +151,7 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 			chgPct = (price - prev) / prev * 100
 		}
 		out = append(out, map[string]interface{}{
-			"symbol":            sym,
+			"symbol":            fromYahooSymbol(sym),
 			"price":             price,
 			"changesPercentage": chgPct,
 		})
@@ -127,6 +163,7 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 	if ticker == "" {
 		return nil
 	}
+	ticker = toYahooSymbol(strings.TrimSpace(ticker))
 	// Prefer yfinance
 	if script := yfinanceScriptPath(); script != "" {
 		cmd := exec.Command(yfinancePython, script, "hist", "--symbol="+ticker, "--from="+fromDate, "--to="+toDate)
@@ -199,6 +236,7 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 	if ticker == "" {
 		return nil
 	}
+	ticker = toYahooSymbol(strings.TrimSpace(ticker))
 	// Prefer yfinance
 	if script := yfinanceScriptPath(); script != "" {
 		cmd := exec.Command(yfinancePython, script, "news", "--symbol="+ticker, "--limit="+strconv.Itoa(min(10, limit)))

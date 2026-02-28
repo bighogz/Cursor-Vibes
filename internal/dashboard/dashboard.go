@@ -14,14 +14,47 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
 
-func Build(limit int, asOf time.Time) map[string]interface{} {
-	companies := sp500.Load()
-	if len(companies) == 0 {
+// BuildOpts controls which companies get trend/news. Filter by sector first, then limit.
+type BuildOpts struct {
+	Sector string
+	Limit  int
+	AsOf   time.Time
+}
+
+func Build(opts BuildOpts) map[string]interface{} {
+	allCompanies := sp500.Load()
+	if len(allCompanies) == 0 {
 		return map[string]interface{}{"error": "Could not load S&P 500", "sectors": []interface{}{}}
 	}
-	if limit > 0 {
-		companies = companies[:min(limit, len(companies))]
+	// Collect sector names for frontend dropdown (before filtering)
+	seen := make(map[string]bool)
+	availableSectors := make([]string, 0)
+	for _, c := range allCompanies {
+		s := c.Sector
+		if s == "" {
+			s = "Unknown"
+		}
+		if !seen[s] {
+			seen[s] = true
+			availableSectors = append(availableSectors, s)
+		}
 	}
+	sort.Strings(availableSectors)
+	companies := allCompanies
+	// Filter by sector first, then apply limit to that subset
+	if opts.Sector != "" {
+		filtered := make([]sp500.Company, 0)
+		for _, c := range companies {
+			if strings.EqualFold(c.Sector, opts.Sector) {
+				filtered = append(filtered, c)
+			}
+		}
+		companies = filtered
+	}
+	if opts.Limit > 0 {
+		companies = companies[:min(opts.Limit, len(companies))]
+	}
+	asOf := opts.AsOf
 	tickers := make([]string, len(companies))
 	for i, c := range companies {
 		tickers[i] = c.Symbol
@@ -31,10 +64,19 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 	dateFrom := asOf.AddDate(0, 0, -totalDays)
 	dateTo := asOf
 
-	sample := 10
+	// When filtering by sector/limit, compute trend/news for all in subset (companies being viewed).
+	// Otherwise sample first N from full CSV. Price is fetched for all; trend/news are per-symbol and
+	// rate-limited, so only the first sample get them. "Trend/news still blank" for most rows is expected.
+	trendNewsLimit := len(companies)
+	if opts.Sector == "" && opts.Limit <= 0 {
+		sample := 10
+		if !config.FMPFreeTier {
+			sample = min(50, len(companies))
+		}
+		trendNewsLimit = min(sample, len(companies))
+	}
 	insiderSample := 15
 	if !config.FMPFreeTier {
-		sample = min(50, len(companies))
 		insiderSample = min(80, len(tickers))
 	}
 
@@ -45,8 +87,10 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 
 	// Try FMP first when key present; fall back to Yahoo on rate limit or error.
 	useYahooForQuotes := config.FMPAPIKey == ""
-	for i := 0; i < min(len(tickers), 50); i += 10 {
-		batch := tickers[i:min(i+10, len(tickers))]
+	batchSize := 100 // both fmpClient.GetQuote and yahooClient.GetQuote support up to 100
+
+	for i := 0; i < len(tickers); i += batchSize {
+		batch := tickers[i:min(i+batchSize, len(tickers))]
 		var quotes []map[string]interface{}
 		if !useYahooForQuotes && config.FMPAPIKey != "" {
 			quotes = fmpClient.GetQuote(batch)
@@ -60,14 +104,16 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 		}
 		for _, q := range quotes {
 			if sym, ok := q["symbol"].(string); ok && sym != "" {
-				quoteBySym[strings.TrimSpace(sym)] = q
+				sym = strings.TrimSpace(sym)
+				quoteBySym[sym] = q
+				// Store under both BRK.B and BRK-B so lookups work for either form
+				if alt := yahoo.ToYahooSymbol(sym); alt != sym {
+					quoteBySym[alt] = q
+				}
 			}
 		}
-		if !useYahooForQuotes {
-			time.Sleep(200 * time.Millisecond)
-		} else {
-			time.Sleep(100 * time.Millisecond)
-		}
+		// a little breathing room; yfinance batch is heavy
+		time.Sleep(150 * time.Millisecond)
 	}
 
 	insiderTickers := tickers[:min(insiderSample, len(tickers))]
@@ -84,7 +130,7 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 	histBySym := make(map[string]*float64)
 	newsBySym := make(map[string][]map[string]interface{})
 
-	for i := 0; i < sample && i < len(companies); i++ {
+	for i := 0; i < trendNewsLimit; i++ {
 		sym := companies[i].Symbol
 		var hist []map[string]interface{}
 		if useYahooForQuotes {
@@ -100,7 +146,7 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
-	for i := 0; i < sample && i < len(companies); i++ {
+	for i := 0; i < trendNewsLimit; i++ {
 		sym := companies[i].Symbol
 		var news []map[string]interface{}
 		if useYahooForQuotes {
@@ -189,9 +235,10 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 	}
 
 	out := map[string]interface{}{
-		"as_of":           asOf.Format("2006-01-02"),
-		"total_companies": len(companies),
-		"sectors":         sectors,
+		"as_of":              asOf.Format("2006-01-02"),
+		"total_companies":    len(companies),
+		"sectors":            sectors,
+		"available_sectors":  availableSectors,
 	}
 	if len(providerStatus) > 0 {
 		out["provider_status"] = providerStatus

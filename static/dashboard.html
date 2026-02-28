@@ -52,6 +52,34 @@
       margin-top: 0.75rem;
     }
     .last-updated { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem; }
+    .filters {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .filters label { font-size: 0.85rem; color: var(--text-muted); }
+    .filters select, .filters input {
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    .filters select { min-width: 180px; }
+    .filters input { width: 80px; }
+    .filters button {
+      padding: 0.5rem 1rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .filters button:hover { background: var(--accent-light); }
 
     /* Loading */
     .loading { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
@@ -126,6 +154,15 @@
     <header class="hero">
       <h1>S&P 500 Insider Tracker</h1>
       <p>All S&P 500 companies by sector. Stock price, quarterly trend, news, and top insider sellers. Updates daily.</p>
+      <div class="filters">
+        <label>Sector</label>
+        <select id="sectorFilter">
+          <option value="">All sectors (cached)</option>
+        </select>
+        <label>Limit</label>
+        <input type="number" id="limitFilter" min="10" max="200" placeholder="50">
+        <button id="applyFilters">Apply</button>
+      </div>
       <p id="lastUpdated" class="last-updated">—</p>
     </header>
 

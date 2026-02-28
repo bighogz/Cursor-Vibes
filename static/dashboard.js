@@ -81,10 +81,35 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function buildDashboardUrl() {
+  const sector = document.getElementById('sectorFilter').value;
+  const limit = document.getElementById('limitFilter').value;
+  const params = new URLSearchParams();
+  if (sector) params.set('sector', sector);
+  if (limit && parseInt(limit, 10) > 0) params.set('limit', limit);
+  const qs = params.toString();
+  return '/api/dashboard' + (qs ? '?' + qs : '');
+}
+
+function populateSectorFilter(sectors) {
+  const sel = document.getElementById('sectorFilter');
+  if (!sel || !sectors || sectors.length === 0) return;
+  const first = sel.options[0];
+  sel.innerHTML = '';
+  sel.appendChild(first);
+  sectors.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    sel.appendChild(opt);
+  });
+}
+
 async function loadDashboard() {
   showLoading();
   try {
-    const res = await fetch('/api/dashboard');
+    const url = buildDashboardUrl();
+    const res = await fetch(url);
     const data = await res.json();
     hideLoading();
 
@@ -94,6 +119,8 @@ async function loadDashboard() {
     }
 
     lastUpdatedEl.textContent = formatLastUpdated(data._cached_at);
+    const availableSectors = data.available_sectors || data.sectors?.map(s => s.name) || [];
+    populateSectorFilter(availableSectors);
 
     sectorsEl.innerHTML = '';
     const sectors = data.sectors || [];
@@ -129,4 +156,7 @@ async function loadDashboard() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', loadDashboard);
+document.addEventListener('DOMContentLoaded', () => {
+  loadDashboard();
+  document.getElementById('applyFilters')?.addEventListener('click', loadDashboard);
+});

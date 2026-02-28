@@ -78,6 +78,24 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	q := r.URL.Query()
+	sector := strings.TrimSpace(q.Get("sector"))
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	// When sector or limit specified, build on-demand for companies being viewed
+	if sector != "" || limit > 0 {
+		opts := dashboard.BuildOpts{Sector: sector, Limit: limit, AsOf: time.Now()}
+		if limit <= 0 {
+			opts.Limit = 50
+		}
+		data := dashboard.Build(opts)
+		jsonResponse(w, data)
+		return
+	}
 	cached, ok := cache.Read(true)
 	if ok {
 		jsonResponse(w, cached)
@@ -104,7 +122,7 @@ func refreshCache() {
 		return
 	}
 	lastRefreshAt = time.Now()
-	data := dashboard.Build(0, time.Now())
+	data := dashboard.Build(dashboard.BuildOpts{AsOf: time.Now()})
 	if data["error"] == nil {
 		cache.Write(data)
 	}

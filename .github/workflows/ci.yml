@@ -47,9 +47,13 @@ assert r.status_code == 200
         run: go build ./...
 
       - name: Build binaries
+        run: make go-build
+
+      - name: API health
         run: |
-          go build -o bin/api ./cmd/api
-          go build -o bin/scan ./cmd/scan
+          ./bin/api &
+          sleep 3
+          curl -sf --max-time 5 http://localhost:8000/api/health
 
   rust:
     name: Rust
