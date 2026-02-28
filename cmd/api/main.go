@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -40,7 +41,15 @@ func main() {
 	if p := os.Getenv("PORT"); p != "" {
 		port = p
 	}
-	http.ListenAndServe(":"+port, nil)
+	srv := &http.Server{
+		Addr:              ":" + port,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Printf("listening on :%s", port)
+	log.Fatal(srv.ListenAndServe())
 }
 
 // hasSPABuild returns true when the React frontend has been built.
