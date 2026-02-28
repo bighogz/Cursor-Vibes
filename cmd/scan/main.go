@@ -11,14 +11,10 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
-	"github.com/joho/godotenv"
 )
 
-func init() {
-	godotenv.Load(".env")
-}
-
 func main() {
+	config.Load()
 	baselineDays := flag.Int("baseline-days", config.BaselineDays, "Days of history for baseline")
 	currentDays := flag.Int("current-days", config.CurrentWindowDays, "Current window days")
 	stdThreshold := flag.Float64("std-threshold", config.AnomalyStdThreshold, "Z-score threshold")

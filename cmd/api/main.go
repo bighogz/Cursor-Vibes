@@ -16,14 +16,10 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
-	"github.com/joho/godotenv"
 )
 
-func init() {
-	godotenv.Load(".env")
-}
-
 func main() {
+	config.Load()
 	http.HandleFunc("/", securityHeaders(serveIndex))
 	http.HandleFunc("/static/", securityHeaders(serveStatic))
 	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))

@@ -1,7 +1,11 @@
 package yahoo
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,6 +19,49 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/httpclient"
 )
+
+var ErrBadJSON = errors.New("yahoo: stdout is not valid JSON")
+
+// scriptSem limits concurrent Python subprocess calls to avoid
+// hammering yfinance when many dashboard requests arrive at once.
+var scriptSem = make(chan struct{}, 4)
+
+// runScript runs the yfinance Python script with a 20s timeout.
+// Returns trimmed stdout bytes and error. Stderr is logged on failure
+// but never mixed into the returned bytes.
+func runScript(label string, args ...string) ([]byte, error) {
+	script := yfinanceScriptPath()
+	if script == "" {
+		log.Printf("yahoo %s: script not found; set VIBES_YAHOO_SCRIPT or run from repo root", label)
+		return nil, exec.ErrNotFound
+	}
+	// Acquire semaphore slot
+	scriptSem <- struct{}{}
+	defer func() { <-scriptSem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, yfinancePython, append([]string{script}, args...)...)
+	cmd.Dir = filepath.Dir(filepath.Dir(script))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("yahoo %s failed: %v; stderr: %s", label, err, stderr.String())
+		return nil, err
+	}
+	out := bytes.TrimSpace(stdout.Bytes())
+	if len(out) == 0 || (out[0] != '[' && out[0] != '{') {
+		preview := string(out)
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		log.Printf("yahoo %s: stdout is not JSON: %s", label, preview)
+		return nil, fmt.Errorf("%w: %s", ErrBadJSON, preview)
+	}
+	return out, nil
+}
 
 // User-Agent required: Yahoo blocks generic clients (401/429)
 const yahooUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -117,25 +164,16 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 		norm = append(norm, toYahooSymbol(strings.TrimSpace(s)))
 	}
 	symStr := strings.Join(norm, ",")
-	script := yfinanceScriptPath()
-	if script == "" {
-		log.Printf("yahoo quotes: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
-	} else {
-		cmd := exec.Command(yfinancePython, script, "quotes", "--symbols="+symStr)
-		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("yahoo quotes subprocess failed: %v; stderr/stdout: %s", err, string(out))
-		} else {
-			var data []map[string]interface{}
-			if json.Unmarshal(out, &data) == nil && len(data) > 0 {
-				for _, q := range data {
-					if sym, ok := q["symbol"].(string); ok && sym != "" {
-						q["symbol"] = fromYahooSymbol(sym)
-					}
+	out, err := runScript("quotes", "quotes", "--symbols="+symStr)
+	if err == nil {
+		var data []map[string]interface{}
+		if json.Unmarshal(out, &data) == nil && len(data) > 0 {
+			for _, q := range data {
+				if sym, ok := q["symbol"].(string); ok && sym != "" {
+					q["symbol"] = fromYahooSymbol(sym)
 				}
-				return data
 			}
+			return data
 		}
 	}
 	// Fallback: direct HTTP (may return 401)
@@ -157,7 +195,7 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil
 	}
-	out := make([]map[string]interface{}, 0)
+	httpOut := make([]map[string]interface{}, 0)
 	for _, r := range data.QuoteResponse.Result {
 		sym, _ := r["symbol"].(string)
 		price := getFloat(r, "regularMarketPrice", "previousClose")
@@ -166,13 +204,13 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 		if prev > 0 {
 			chgPct = (price - prev) / prev * 100
 		}
-		out = append(out, map[string]interface{}{
+		httpOut = append(httpOut, map[string]interface{}{
 			"symbol":            fromYahooSymbol(sym),
 			"price":             price,
 			"changesPercentage": chgPct,
 		})
 	}
-	return out
+	return httpOut
 }
 
 func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[string]interface{} {
@@ -180,21 +218,12 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		return nil
 	}
 	ticker = toYahooSymbol(strings.TrimSpace(ticker))
-	script := yfinanceScriptPath()
-	if script != "" {
-		cmd := exec.Command(yfinancePython, script, "hist", "--symbol="+ticker, "--from="+fromDate, "--to="+toDate)
-		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("yahoo hist subprocess failed (%s): %v; stderr/stdout: %s", ticker, err, string(out))
-		} else {
-			var data []map[string]interface{}
-			if json.Unmarshal(out, &data) == nil {
-				return data
-			}
+	out, err := runScript("hist("+ticker+")", "hist", "--symbol="+ticker, "--from="+fromDate, "--to="+toDate)
+	if err == nil {
+		var data []map[string]interface{}
+		if json.Unmarshal(out, &data) == nil {
+			return data
 		}
-	} else {
-		log.Printf("yahoo hist: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
 	}
 	// Fallback: direct HTTP
 	period1 := int64(0)
@@ -239,18 +268,18 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		return nil
 	}
 	closes := r.Indicators.Quote[0].Close
-	out := make([]map[string]interface{}, 0)
+	histOut := make([]map[string]interface{}, 0)
 	for i, ts := range r.Timestamp {
 		if i >= len(closes) {
 			break
 		}
 		t := time.Unix(ts, 0)
-		out = append(out, map[string]interface{}{
+		histOut = append(histOut, map[string]interface{}{
 			"date":  t.Format("2006-01-02"),
 			"close": closes[i],
 		})
 	}
-	return out
+	return histOut
 }
 
 func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
@@ -258,21 +287,12 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 		return nil
 	}
 	ticker = toYahooSymbol(strings.TrimSpace(ticker))
-	script := yfinanceScriptPath()
-	if script != "" {
-		cmd := exec.Command(yfinancePython, script, "news", "--symbol="+ticker, "--limit="+strconv.Itoa(min(10, limit)))
-		cmd.Dir = filepath.Dir(filepath.Dir(script))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("yahoo news subprocess failed (%s): %v; stderr/stdout: %s", ticker, err, string(out))
-		} else {
-			var data []map[string]interface{}
-			if json.Unmarshal(out, &data) == nil {
-				return data
-			}
+	out, err := runScript("news("+ticker+")", "news", "--symbol="+ticker, "--limit="+strconv.Itoa(min(10, limit)))
+	if err == nil {
+		var data []map[string]interface{}
+		if json.Unmarshal(out, &data) == nil {
+			return data
 		}
-	} else {
-		log.Printf("yahoo news: script not found; set VIBES_YAHOO_SCRIPT or run from repo root")
 	}
 	u := "https://query1.finance.yahoo.com/v1/finance/search?q=" + url.QueryEscape(ticker) + "&quotesCount=0&newsCount=" + strconv.Itoa(min(10, limit))
 	req, err := http.NewRequest("GET", u, nil)
@@ -294,7 +314,7 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil
 	}
-	out := make([]map[string]interface{}, 0)
+	newsOut := make([]map[string]interface{}, 0)
 	for i, n := range data.News {
 		if i >= limit {
 			break
@@ -303,13 +323,13 @@ func (c *Client) GetNews(ticker string, limit int) []map[string]interface{} {
 		if len(title) > 80 {
 			title = title[:80]
 		}
-		out = append(out, map[string]interface{}{
+		newsOut = append(newsOut, map[string]interface{}{
 			"title": title,
 			"url":   n.Link,
 			"link":  n.Link,
 		})
 	}
-	return out
+	return newsOut
 }
 
 func getFloat(m map[string]interface{}, keys ...string) float64 {
@@ -350,15 +370,16 @@ func ProviderHealth() map[string]interface{} {
 	importOK := false
 	imp := exec.Command(py, "-c", "import yfinance; print('ok')")
 	imp.Dir = dir
-	out, err := imp.CombinedOutput()
-	importOK = err == nil && strings.TrimSpace(string(out)) == "ok"
+	var impOut bytes.Buffer
+	imp.Stdout = &impOut
+	if imp.Run() == nil && strings.TrimSpace(impOut.String()) == "ok" {
+		importOK = true
+	}
 
-	// quotes check
+	// quotes check (use runScript to avoid stderr mixing)
 	quotesOK := false
 	quotesOutput := ""
-	cmdQuotes := exec.Command(py, script, "quotes", "--symbols=AAPL")
-	cmdQuotes.Dir = dir
-	outQuotes, errQuotes := cmdQuotes.CombinedOutput()
+	outQuotes, errQuotes := runScript("health-quotes", "quotes", "--symbols=AAPL")
 	quotesOK = errQuotes == nil
 	quotesOutput = string(outQuotes)
 	if len(quotesOutput) > 200 {
@@ -369,9 +390,7 @@ func ProviderHealth() map[string]interface{} {
 	histCloses := 0
 	toDate := time.Now().Format("2006-01-02")
 	fromDate := time.Now().AddDate(0, 0, -92).Format("2006-01-02")
-	cmdHist := exec.Command(py, script, "hist", "--symbol=AAPL", "--from="+fromDate, "--to="+toDate)
-	cmdHist.Dir = dir
-	outHist, errHist := cmdHist.CombinedOutput()
+	outHist, errHist := runScript("health-hist", "hist", "--symbol=AAPL", "--from="+fromDate, "--to="+toDate)
 	if errHist == nil {
 		var data []map[string]interface{}
 		if json.Unmarshal(outHist, &data) == nil {
