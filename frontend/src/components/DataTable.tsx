@@ -1,8 +1,10 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
-import { fmtPrice, fmtPct } from "../lib/format";
+import { fmtPrice, fmtPct, fmtShares } from "../lib/format";
 import { Sparkline } from "./Sparkline";
 import type { Company, Sector } from "../types/dashboard";
+
+const COL_COUNT = 7;
 
 interface Props {
   sectors: Sector[];
@@ -103,11 +105,12 @@ export function DataTable({
         <thead className="sticky top-0 z-10 bg-surface-0">
           <tr className="border-b border-line">
             <Th className="w-[72px] pl-5">Symbol</Th>
-            <Th className="w-[18%]">Company</Th>
-            <Th className="w-[88px] text-right">Price</Th>
-            <Th className="w-[80px] text-right">Change</Th>
-            <Th className="w-[200px]">Quarterly Trend</Th>
-            <Th className="min-w-[200px]">Recent News</Th>
+            <Th className="w-[14%]">Company</Th>
+            <Th className="w-[80px] text-right">Price</Th>
+            <Th className="w-[72px] text-right">Change</Th>
+            <Th className="w-[180px]">Quarterly Trend</Th>
+            <Th className="w-[180px]">Recent News</Th>
+            <Th className="min-w-[150px]">Top Insiders</Th>
           </tr>
         </thead>
         <tbody>
@@ -163,7 +166,7 @@ const SectorHeader = memo(function SectorHeader({
 }) {
   return (
     <tr className="bg-surface-1 border-y border-line">
-      <td colSpan={6} className="px-5 py-2">
+      <td colSpan={COL_COUNT} className="px-5 py-2">
         <div className="flex items-center gap-2.5">
           <span className="text-xs font-medium text-content">{name}</span>
           <span className="text-2xs text-content-muted tabular-nums bg-surface-0 px-1.5 py-0.5 rounded">
@@ -191,6 +194,7 @@ const CompanyRow = memo(function CompanyRow({
   const handleClick = useCallback(() => onClick(), [onClick]);
   const isUp = (c.quarter_trend ?? 0) >= 0;
   const hasNews = c.news && c.news.length > 0;
+  const hasInsiders = c.top_insiders && c.top_insiders.length > 0;
 
   return (
     <tr
@@ -274,11 +278,39 @@ const CompanyRow = memo(function CompanyRow({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="text-xs text-content-secondary hover:text-accent-hover truncate block max-w-[280px] transition-colors"
+            className="text-xs text-content-secondary hover:text-accent-hover truncate block max-w-[240px] transition-colors"
             title={c.news![0].title}
           >
             {c.news![0].title}
           </a>
+        ) : (
+          <Muted />
+        )}
+      </td>
+
+      {/* Top Insiders */}
+      <td className="px-3 py-2.5">
+        {hasInsiders ? (
+          <div className="space-y-0.5">
+            {c.top_insiders!.slice(0, 2).map((ins, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-1.5 text-xs text-content-secondary"
+              >
+                <span className="truncate max-w-[100px]" title={ins.name}>
+                  {ins.name}
+                </span>
+                <span className="text-content-muted tabular-nums flex-shrink-0">
+                  {fmtShares(ins.shares)}
+                </span>
+              </div>
+            ))}
+            {c.top_insiders!.length > 2 && (
+              <span className="text-2xs text-content-muted">
+                +{c.top_insiders!.length - 2} more
+              </span>
+            )}
+          </div>
         ) : (
           <Muted />
         )}
@@ -298,10 +330,11 @@ function SkeletonTable() {
         <thead className="sticky top-0 z-10 bg-surface-0">
           <tr className="border-b border-line">
             <th className="px-5 py-2 w-[72px]" />
-            <th className="px-3 py-2 w-[18%]" />
-            <th className="px-3 py-2 w-[88px]" />
+            <th className="px-3 py-2 w-[14%]" />
             <th className="px-3 py-2 w-[80px]" />
-            <th className="px-3 py-2 w-[200px]" />
+            <th className="px-3 py-2 w-[72px]" />
+            <th className="px-3 py-2 w-[180px]" />
+            <th className="px-3 py-2 w-[180px]" />
             <th className="px-3 py-2" />
           </tr>
         </thead>
@@ -324,7 +357,10 @@ function SkeletonTable() {
                 <div className="h-6 w-24 bg-surface-2 rounded animate-pulse" />
               </td>
               <td className="px-3 py-3">
-                <div className="h-3.5 w-48 bg-surface-2 rounded animate-pulse" />
+                <div className="h-3.5 w-40 bg-surface-2 rounded animate-pulse" />
+              </td>
+              <td className="px-3 py-3">
+                <div className="h-3.5 w-28 bg-surface-2 rounded animate-pulse" />
               </td>
             </tr>
           ))}
