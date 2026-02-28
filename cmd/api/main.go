@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -131,9 +132,18 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	sector := strings.TrimSpace(q.Get("sector"))
 	limit := 0
 	if v := q.Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			limit = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 600 {
+			w.WriteHeader(http.StatusBadRequest)
+			jsonResponse(w, map[string]string{"error": "limit must be an integer between 0 and 600"})
+			return
 		}
+		limit = n
+	}
+	if sector != "" && !isValidSector(sector) {
+		w.WriteHeader(http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"error": fmt.Sprintf("unknown sector: %q", sector)})
+		return
 	}
 	if sector != "" || limit > 0 {
 		if limit <= 0 {
@@ -364,4 +374,22 @@ func clampFloat(v, lo, hi float64) float64 {
 		return hi
 	}
 	return v
+}
+
+// SI-10: restrict sector param to known GICS sectors + "Unknown".
+var validSectors = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, s := range []string{
+		"Communication Services", "Consumer Discretionary", "Consumer Staples",
+		"Energy", "Financials", "Health Care", "Industrials",
+		"Information Technology", "Materials", "Real Estate", "Utilities",
+		"Unknown",
+	} {
+		m[strings.ToLower(s)] = true
+	}
+	return m
+}()
+
+func isValidSector(s string) bool {
+	return validSectors[strings.ToLower(s)]
 }
