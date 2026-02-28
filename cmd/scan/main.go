@@ -10,6 +10,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/aggregator"
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
+	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/joho/godotenv"
 )
 
@@ -52,7 +53,42 @@ func main() {
 	records := aggregator.AggregateInsiderSells(tickers, dateFrom, dateTo)
 	fmt.Printf("Aggregated %d insider sell records.\n", len(records))
 
-	signals := aggregator.ComputeAnomalySignals(records, *baselineDays, *currentDays, *stdThreshold, asOf)
+	var signals []struct {
+		Ticker            string
+		CurrentSharesSold float64
+		BaselineMean      float64
+		BaselineStd       float64
+		ZScore            float64
+		IsAnomaly         bool
+	}
+	if rustclient.Available() {
+		rustSignals, err := rustclient.ComputeAnomalySignals(records, *baselineDays, *currentDays, *stdThreshold, asOf.Format("2006-01-02"))
+		if err == nil {
+			for _, s := range rustSignals {
+				signals = append(signals, struct {
+					Ticker            string
+					CurrentSharesSold float64
+					BaselineMean      float64
+					BaselineStd       float64
+					ZScore            float64
+					IsAnomaly         bool
+				}{s.Ticker, s.CurrentSharesSold, s.BaselineMean, s.BaselineStd, s.ZScore, s.IsAnomaly})
+			}
+		}
+	}
+	if len(signals) == 0 {
+		goSignals := aggregator.ComputeAnomalySignals(records, *baselineDays, *currentDays, *stdThreshold, asOf)
+		for _, s := range goSignals {
+			signals = append(signals, struct {
+				Ticker            string
+				CurrentSharesSold float64
+				BaselineMean      float64
+				BaselineStd       float64
+				ZScore            float64
+				IsAnomaly         bool
+			}{s.Ticker, s.CurrentSharesSold, s.BaselineMean, s.BaselineStd, s.ZScore, s.IsAnomaly})
+		}
+	}
 
 	if *listAll {
 		fmt.Println("\nAll signals (current window vs baseline):")

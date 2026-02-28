@@ -6,6 +6,7 @@ __pycache__/
 /bin/
 *.exe
 /target/
+rust-core/target/
 .venv/
 venv/
 *.csv
