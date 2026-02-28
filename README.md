@@ -189,23 +189,54 @@ rust-core/
   src/trend.rs          Quarterly trend (linear regression)
   src/models.rs         InsiderSellRecord
 static/                 Legacy dashboard UI (fallback)
-docs/                   Security audit, API call docs
+docs/                   Security controls, audit, API call docs
 ```
 
 ## Security
 
-- **HTTP server hardening**: ReadHeaderTimeout (10s), ReadTimeout (30s), WriteTimeout (120s), IdleTimeout (60s)
-- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
-- **Rate limiting**: Scan endpoint (1 req/5s per IP), refresh debounce (5 min)
-- **Path traversal protection**: Static file serving validates paths under allowed directories
-- **Cache security**: Files written with mode 0600
-- **Auth**: Optional `ADMIN_API_KEY` for protected endpoints (scan, refresh)
-- **Binary validation**: `VIBES_ANOMALY_BIN` must be under project root
-- **Concurrency control**: Yahoo request semaphore (cap 8)
-- **Config isolation**: All config loaded via explicit `config.Load()` with `sync.Once`
-- **Dependency scanning**: govulncheck, cargo-audit, osv-scanner -- 0 known vulnerabilities
+Aligned to a curated subset of [NIST SP 800-53r5](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r5.pdf). See [docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md) for the full controls checklist and threat model.
 
-See [docs/SECURITY_PERFORMANCE_AUDIT.md](docs/SECURITY_PERFORMANCE_AUDIT.md) for the full audit.
+### CI security pipeline (RA-5)
+
+Every push and PR runs five automated scanners:
+
+| Scanner | Scope |
+|---------|-------|
+| **semgrep** | SAST — Go, Rust, JS/TS (OWASP Top 10 + security-audit rules) |
+| **govulncheck** | Go dependency vulns with symbol-level reachability |
+| **osv-scanner** | SCA across `go.mod`, `Cargo.lock`, `package-lock.json` |
+| **cargo-audit** | Rust crate advisory database |
+| **gitleaks** | Secret detection in working tree + git history |
+
+Triage SLAs: Critical 7d, High 14d, Medium 30d, Low next release.
+
+### Runtime hardening
+
+- **HTTP server timeouts**: ReadHeader 10s, Read 30s, Write 120s, Idle 60s
+- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **Request audit logging (AU-12)**: Every request gets a unique `X-Request-Id`; method, path, status, and duration are logged
+- **Input validation (SI-10)**: `sector` validated against GICS enum; `limit` bounded `[0, 600]`; all numeric params clamped; bad input returns structured `400` JSON
+- **Auth (SA-10)**: `ADMIN_API_KEY` checked via `crypto/subtle.ConstantTimeCompare` — timing-attack resistant
+- **Rate limiting**: Scan 1 req/5s per IP, refresh debounce 5 min
+- **Path traversal protection**: `safeStaticPath()` + `..` rejection
+- **Binary validation**: `VIBES_ANOMALY_BIN` must resolve under project root
+- **Concurrency control**: Yahoo request semaphore (cap 8)
+- **Config isolation**: All config loaded via `config.Load()` with `sync.Once`
+- **Dependency scanning**: 0 known vulnerabilities (govulncheck, cargo-audit, osv-scanner)
+
+### Controls checklist (NIST 800-53r5 subset)
+
+| Control | ID | Status |
+|---------|-----|--------|
+| Automated vuln scanning in CI | RA-5 | Done |
+| Secure SDLC + threat model | SA-10/SA-15 | Done |
+| Dependency governance (pin + scan) | CM-10(1) | Done |
+| Input validation + injection prevention | SI-10 | Done |
+| Robust error handling | SI-11 | Done |
+| Structured audit logs + retention | AU-12/AU-11 | Done |
+| Encrypt in transit/at rest | AC-17/SC-28 | Documented |
+
+See also: [docs/SECURITY_PERFORMANCE_AUDIT.md](docs/SECURITY_PERFORMANCE_AUDIT.md) for the full code-level audit.
 
 ## Build targets
 
