@@ -20,53 +20,33 @@ function showError(msg) {
 }
 
 function formatLastUpdated(iso) {
-  if (!iso) return '—';
+  if (!iso) return '';
   const d = new Date(iso);
   const now = new Date();
   const diffMs = now - d;
   const diffM = Math.floor(diffMs / 60000);
   const diffH = Math.floor(diffMs / 3600000);
   if (diffM < 1) return 'Updated just now';
-  if (diffM < 60) return `Updated ${diffM} min ago`;
-  if (diffH < 24) return `Updated ${diffH} hours ago`;
-  return `Updated ${Math.floor(diffH / 24)} days ago`;
+  if (diffM < 60) return `Updated ${diffM}m ago`;
+  if (diffH < 24) return `Updated ${diffH}h ago`;
+  return `Updated ${Math.floor(diffH / 24)}d ago`;
 }
 
 function fmtPrice(p) {
-  if (p == null || p === 0) return '—';
+  if (p == null || p === 0) return '<span class="muted">—</span>';
   return '$' + Number(p).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtPct(n) {
-  if (n == null) return '—';
-  const cls = n >= 0 ? 'up' : 'down';
-  const s = (n >= 0 ? '+' : '') + n + '%';
-  return `<span class="${cls}">${s}</span>`;
+  if (n == null) return null;
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 }
 
-function renderCompany(c) {
-  const price = c.price ? fmtPrice(c.price) : '—';
-  const qTrend = fmtPct(c.quarter_trend);
-  let newsHtml = '—';
-  if (c.news && c.news.length > 0) {
-    newsHtml = c.news.map(n => `<a href="${n.url}" target="_blank" rel="noopener">${escapeHtml(n.title)}</a>`).join('<br>');
-  }
-  let insidersHtml = '—';
-  if (c.top_insiders && c.top_insiders.length > 0) {
-    insidersHtml = c.top_insiders.map(i =>
-      `<span>${escapeHtml(i.name)} (${i.role || '—'}) — ${formatNum(i.shares)} shares</span>`
-    ).join('');
-  }
-  return `
-    <tr>
-      <td><span class="sym">${escapeHtml(c.symbol)}</span></td>
-      <td>${escapeHtml(c.name)}</td>
-      <td class="price">${price}</td>
-      <td>${qTrend}</td>
-      <td class="news-cell">${newsHtml}</td>
-      <td class="insiders">${insidersHtml}</td>
-    </tr>
-  `;
+function escapeHtml(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
 
 function formatNum(n) {
@@ -75,10 +55,65 @@ function formatNum(n) {
   return String(Math.round(n));
 }
 
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+// SVG sparkline from an array of numbers
+function sparklineSVG(closes, isUp) {
+  if (!closes || closes.length < 2) return '';
+  const w = 100, h = 32, pad = 2;
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const pts = closes.map((v, i) => {
+    const x = pad + (i / (closes.length - 1)) * (w - pad * 2);
+    const y = pad + (1 - (v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const color = isUp ? '#22c55e' : '#ef4444';
+  const fill = isUp ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
+  const lastPt = pts[pts.length - 1];
+  const areaPath = `M${pts[0]} ${pts.join(' L')} L${lastPt.split(',')[0]},${h} L${pts[0].split(',')[0]},${h} Z`;
+  return `<svg class="sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <path d="${areaPath}" fill="${fill}" />
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>`;
+}
+
+function renderTrend(c) {
+  const pct = c.quarter_trend;
+  const closes = c.quarter_closes;
+  if (pct == null) return '<span class="muted">—</span>';
+  const isUp = pct >= 0;
+  const cls = isUp ? 'up' : 'down';
+  const badge = `<span class="trend-badge ${cls}">${fmtPct(pct)}</span>`;
+  const spark = sparklineSVG(closes, isUp);
+  return `<div class="trend-cell">${spark}${badge}</div>`;
+}
+
+function renderCompany(c) {
+  const price = fmtPrice(c.price);
+  const trendHtml = renderTrend(c);
+
+  let newsHtml = '<span class="muted">—</span>';
+  if (c.news && c.news.length > 0) {
+    newsHtml = c.news.map(n =>
+      `<a href="${n.url || n.link}" target="_blank" rel="noopener">${escapeHtml(n.title)}</a>`
+    ).join('');
+  }
+
+  let insidersHtml = '<span class="muted">—</span>';
+  if (c.top_insiders && c.top_insiders.length > 0) {
+    insidersHtml = c.top_insiders.map(i =>
+      `<span>${escapeHtml(i.name)} — ${formatNum(i.shares)}</span>`
+    ).join('');
+  }
+
+  return `<tr>
+    <td><span class="sym">${escapeHtml(c.symbol)}</span></td>
+    <td class="company-name" title="${escapeHtml(c.name)}">${escapeHtml(c.name)}</td>
+    <td class="price-cell">${price}</td>
+    <td>${trendHtml}</td>
+    <td class="news-cell">${newsHtml}</td>
+    <td class="insiders">${insidersHtml}</td>
+  </tr>`;
 }
 
 function buildDashboardUrl() {
@@ -87,7 +122,7 @@ function buildDashboardUrl() {
   const params = new URLSearchParams();
   if (sector) params.set('sector', sector);
   const limitNum = limit ? parseInt(limit, 10) : 50;
-  params.set('limit', limitNum > 0 ? limitNum : 50); // always on-demand; bypasses stale cache
+  params.set('limit', limitNum > 0 ? limitNum : 50);
   const qs = params.toString();
   return '/api/dashboard' + (qs ? '?' + qs : '');
 }
@@ -119,24 +154,32 @@ async function loadDashboard() {
       return;
     }
 
-    lastUpdatedEl.textContent = formatLastUpdated(data._cached_at);
+    lastUpdatedEl.textContent = formatLastUpdated(data._cached_at || data.as_of);
     const availableSectors = data.available_sectors || data.sectors?.map(s => s.name) || [];
     populateSectorFilter(availableSectors);
 
     sectorsEl.innerHTML = '';
     const sectors = data.sectors || [];
     if (sectors.length === 0) {
-      sectorsEl.innerHTML = '<p class="empty-state">Dashboard is being built. This usually takes 2–3 minutes on first run. Check back shortly.</p>';
+      sectorsEl.innerHTML = '<p class="empty-state">Dashboard is being built. This usually takes 2–3 minutes on first run.</p>';
       return;
     }
 
     sectors.forEach(sec => {
+      const companies = sec.companies || [];
       const section = document.createElement('div');
       section.className = 'sector';
-      const rows = (sec.companies || []).map(renderCompany).join('');
+      const rows = companies.map(renderCompany).join('');
       section.innerHTML = `
-        <div class="sector-header">${escapeHtml(sec.name)}</div>
+        <div class="sector-header">
+          ${escapeHtml(sec.name)}
+          <span class="sector-count">${companies.length}</span>
+        </div>
         <table class="sector-table">
+          <colgroup>
+            <col class="col-sym"><col class="col-name"><col class="col-price">
+            <col class="col-trend"><col class="col-news"><col class="col-ins">
+          </colgroup>
           <thead>
             <tr>
               <th>Symbol</th>
@@ -144,16 +187,15 @@ async function loadDashboard() {
               <th>Price</th>
               <th>Quarterly Trend</th>
               <th>Recent News</th>
-              <th>Top Insider Sellers</th>
+              <th>Insiders</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
-        </table>
-      `;
+        </table>`;
       sectorsEl.appendChild(section);
     });
   } catch (err) {
-    showError('We couldn’t load the dashboard. It may be updating — try again in a minute.');
+    showError('Could not load the dashboard. It may be updating — try again in a minute.');
   }
 }
 

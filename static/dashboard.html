@@ -3,23 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>S&P 500 Insider Tracker — Modal-style</title>
+  <title>S&P 500 Insider Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0d0d0d;
-      --bg-elevated: #141414;
-      --bg-card: #1a1a1a;
-      --border: #272727;
+      --bg: #09090b;
+      --bg-elevated: #111113;
+      --bg-card: #18181b;
+      --border: #27272a;
       --text: #fafafa;
-      --text-muted: #a1a1a1;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
       --accent: #6366f1;
       --accent-light: #818cf8;
       --green: #22c55e;
+      --green-dim: rgba(34,197,94,0.12);
       --red: #ef4444;
+      --red-dim: rgba(239,68,68,0.12);
       --radius: 12px;
+      --radius-sm: 8px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -28,144 +32,234 @@
       color: var(--text);
       min-height: 100vh;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
-    .container { max-width: 1400px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .container { max-width: 1280px; margin: 0 auto; padding: 0 1.5rem; }
 
-    /* Hero - Modal style */
-    .hero {
-      text-align: center;
-      padding: 4rem 0 3rem;
+    /* Header */
+    .header {
+      padding: 2rem 0 1.5rem;
       border-bottom: 1px solid var(--border);
     }
-    .hero h1 {
-      font-size: clamp(2rem, 5vw, 3rem);
+    .header h1 {
+      font-size: 1.5rem;
       font-weight: 700;
-      letter-spacing: -0.03em;
-      background: linear-gradient(135deg, #fff 0%, #a1a1a1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      letter-spacing: -0.02em;
     }
-    .hero p {
+    .header p {
       color: var(--text-muted);
-      font-size: 1.1rem;
-      margin-top: 0.75rem;
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
     }
-    .last-updated { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem; }
-    .filters {
+    .toolbar {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
       margin-top: 1rem;
       flex-wrap: wrap;
     }
-    .filters label { font-size: 0.85rem; color: var(--text-muted); }
-    .filters select, .filters input {
-      padding: 0.5rem 0.75rem;
+    .toolbar label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .toolbar select, .toolbar input[type="number"] {
+      padding: 0.4rem 0.6rem;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: var(--text);
-      font-size: 0.9rem;
+      font-size: 0.8rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
     }
-    .filters select { min-width: 180px; }
-    .filters input { width: 80px; }
-    .filters button {
-      padding: 0.5rem 1rem;
+    .toolbar select:focus, .toolbar input:focus { border-color: var(--accent); }
+    .toolbar select { min-width: 170px; }
+    .toolbar input[type="number"] { width: 64px; }
+    .toolbar button {
+      padding: 0.4rem 0.85rem;
       background: var(--accent);
       color: white;
       border: none;
-      border-radius: 8px;
-      font-size: 0.9rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-weight: 500;
+      font-family: inherit;
       cursor: pointer;
+      transition: background 0.15s;
     }
-    .filters button:hover { background: var(--accent-light); }
-    .filter-hint { font-size: 0.8rem; color: var(--text-muted); margin-left: 0.5rem; }
+    .toolbar button:hover { background: var(--accent-light); }
+    .meta {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
 
     /* Loading */
-    .loading { text-align: center; padding: 4rem 2rem; color: var(--text-muted); }
+    .loading { text-align: center; padding: 6rem 2rem; color: var(--text-muted); }
     .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid var(--border);
+      width: 32px; height: 32px;
+      border: 2.5px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 1rem;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 0.75rem;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Sector columns - Modal grid feel */
-    .sectors { margin-top: 2rem; }
+    /* Sectors */
+    .sectors { padding: 1.5rem 0 3rem; }
     .sector {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      margin-bottom: 2rem;
+      margin-bottom: 1.25rem;
       overflow: hidden;
     }
     .sector-header {
-      padding: 1rem 1.25rem;
+      padding: 0.75rem 1rem;
       background: var(--bg-elevated);
       border-bottom: 1px solid var(--border);
       font-weight: 600;
-      font-size: 1rem;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
-    .sector-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .sector-count {
+      font-size: 0.7rem;
+      font-weight: 400;
+      color: var(--text-muted);
+      background: var(--bg);
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+    }
+
+    /* Table */
+    .sector-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      table-layout: fixed;
+    }
     .sector-table th {
       text-align: left;
-      padding: 0.65rem 1rem;
+      padding: 0.5rem 1rem;
       font-weight: 500;
       color: var(--text-muted);
-      font-size: 0.75rem;
+      font-size: 0.6875rem;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       border-bottom: 1px solid var(--border);
+      white-space: nowrap;
     }
     .sector-table td {
-      padding: 0.75rem 1rem;
+      padding: 0.6rem 1rem;
       border-bottom: 1px solid var(--border);
-      vertical-align: top;
+      vertical-align: middle;
     }
     .sector-table tr:last-child td { border-bottom: none; }
-    .sector-table tr:hover { background: rgba(255,255,255,0.02); }
+    .sector-table tr:hover { background: rgba(255,255,255,0.015); }
 
-    .sym { font-weight: 600; color: var(--accent-light); }
-    .price { font-variant-numeric: tabular-nums; }
+    /* Column widths */
+    .col-sym   { width: 7%; }
+    .col-name  { width: 17%; }
+    .col-price { width: 9%; }
+    .col-trend { width: 28%; }
+    .col-news  { width: 27%; }
+    .col-ins   { width: 12%; }
+
+    .sym { font-weight: 600; color: var(--accent-light); font-size: 0.8125rem; }
+    .company-name {
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .price-cell {
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+    }
     .up { color: var(--green); }
     .down { color: var(--red); }
-    .news-cell { max-width: 220px; }
-    .news-cell a { color: var(--accent-light); text-decoration: none; font-size: 0.8rem; }
-    .news-cell a:hover { text-decoration: underline; }
-    .insiders { font-size: 0.8rem; color: var(--text-muted); }
-    .insiders span { display: block; margin-bottom: 0.2rem; }
 
-    .error { color: var(--red); padding: 1rem; background: rgba(239,68,68,0.1); border-radius: var(--radius); margin: 1rem 0; }
-    .empty-state { color: var(--text-muted); text-align: center; padding: 3rem 2rem; }
-    .nav { padding: 1rem 0; }
-    .nav a { color: var(--text-muted); text-decoration: none; margin-right: 1rem; font-size: 0.9rem; }
-    .nav a:hover { color: var(--accent-light); }
+    /* Trend cell: sparkline + number */
+    .trend-cell {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .sparkline { flex-shrink: 0; }
+    .trend-val {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      font-size: 0.8125rem;
+      white-space: nowrap;
+    }
+    .trend-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15rem 0.45rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .trend-badge.up { background: var(--green-dim); color: var(--green); }
+    .trend-badge.down { background: var(--red-dim); color: var(--red); }
+
+    /* News */
+    .news-cell a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.75rem;
+      line-height: 1.4;
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .news-cell a:hover { color: var(--accent-light); }
+    .news-cell a + a { margin-top: 0.2rem; }
+
+    /* Insiders */
+    .insiders { font-size: 0.75rem; color: var(--text-muted); }
+    .insiders span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .muted { color: var(--text-muted); }
+
+    .error {
+      color: var(--red);
+      padding: 1rem;
+      background: var(--red-dim);
+      border-radius: var(--radius);
+      margin: 1.5rem 0;
+      font-size: 0.875rem;
+    }
+    .empty-state {
+      color: var(--text-muted);
+      text-align: center;
+      padding: 4rem 2rem;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <nav class="nav">
-      <a href="/">Dashboard</a>
-    </nav>
-
-    <header class="hero">
+    <header class="header">
       <h1>S&P 500 Insider Tracker</h1>
-      <p>All S&P 500 companies by sector. Stock price, quarterly trend, news, and top insider sellers. Updates daily.</p>
-      <div class="filters">
-        <label>Sector</label>
+      <p>Stock price, quarterly trend, news, and top insider sellers. Updated daily.</p>
+      <div class="toolbar">
+        <label for="sectorFilter">Sector</label>
         <select id="sectorFilter">
-          <option value="">All sectors (cached)</option>
+          <option value="">All sectors</option>
         </select>
-        <label>Limit</label>
-        <input type="number" id="limitFilter" min="10" max="200" placeholder="50" title="Max companies (10–200). Use with sector for on-demand build.">
+        <label for="limitFilter">Limit</label>
+        <input type="number" id="limitFilter" min="5" max="200" placeholder="50">
         <button id="applyFilters">Apply</button>
-        <span class="filter-hint">Pick sector + limit for faster on-demand load</span>
+        <span class="meta" id="lastUpdated"></span>
       </div>
-      <p id="lastUpdated" class="last-updated">—</p>
     </header>
 
     <div id="loading" class="loading">

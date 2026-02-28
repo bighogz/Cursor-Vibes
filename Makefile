@@ -1,4 +1,4 @@
-.PHONY: build go-build rust-build go-run go-scan deps
+.PHONY: build go-build rust-build go-run go-scan deps clean
 
 build: go-build rust-build
 
@@ -20,3 +20,6 @@ go-scan: go-build
 deps:
 	go mod download
 	go mod tidy
+
+clean:
+	rm -rf bin/ rust-core/target/

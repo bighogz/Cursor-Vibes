@@ -10,6 +10,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
+	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/bighogz/Cursor-Vibes/internal/sp500"
 	"github.com/bighogz/Cursor-Vibes/internal/trend"
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
@@ -130,7 +131,7 @@ func Build(opts BuildOpts) map[string]interface{} {
 	qStartStr := qStart.Format("2006-01-02")
 	qEndStr := asOf.Format("2006-01-02")
 
-	histBySym := make(map[string]*float64)
+	histBySym := make(map[string]*trendDataResult)
 	newsBySym := make(map[string][]map[string]interface{})
 
 	for i := 0; i < trendNewsLimit; i++ {
@@ -144,8 +145,8 @@ func Build(opts BuildOpts) map[string]interface{} {
 				hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
 			}
 		}
-		if qt := quarterTrendFromHist(hist); qt != nil {
-			histBySym[sym] = qt
+		if td := quarterTrendData(hist); td != nil {
+			histBySym[sym] = td
 		}
 		if i < 3 {
 			log.Printf("dashboard Build: hist ticker[%d]=%s hist_records=%d trend=%v", i, sym, len(hist), histBySym[sym] != nil)
@@ -216,15 +217,22 @@ func Build(opts BuildOpts) map[string]interface{} {
 		if len(topInsiders[sym]) > 0 {
 			insiderSrc = "fmp"
 		}
+		var qTrend *float64
+		var qCloses []float64
+		if td := histBySym[sym]; td != nil {
+			qTrend = &td.Pct
+			qCloses = td.Closes
+		}
 		bySector[sector] = append(bySector[sector], map[string]interface{}{
-			"symbol":         sym,
-			"name":           c.Name,
-			"price":          pricePtr,
-			"change_pct":     chgPtr,
-			"quarter_trend":  histBySym[sym],
-			"news":           newsBySym[sym],
-			"top_insiders":   topInsiders[sym],
-			"sources":        map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
+			"symbol":          sym,
+			"name":            c.Name,
+			"price":           pricePtr,
+			"change_pct":      chgPtr,
+			"quarter_trend":   qTrend,
+			"quarter_closes":  qCloses,
+			"news":            newsBySym[sym],
+			"top_insiders":    topInsiders[sym],
+			"sources":         map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
 		})
 	}
 
@@ -253,7 +261,14 @@ func Build(opts BuildOpts) map[string]interface{} {
 	return out
 }
 
-func quarterTrendFromHist(hist []map[string]interface{}) *float64 {
+type trendDataResult struct {
+	Pct    float64
+	Closes []float64
+}
+
+// quarterTrendData computes the quarter return and samples ~13 weekly closes for sparklines.
+// Prefers Rust binary when available; falls back to Go trend package.
+func quarterTrendData(hist []map[string]interface{}) *trendDataResult {
 	if len(hist) < 2 {
 		return nil
 	}
@@ -267,11 +282,41 @@ func quarterTrendFromHist(hist []map[string]interface{}) *float64 {
 			closes = append(closes, c)
 		}
 	}
-	qt := trend.FromCloses(closes)
-	if qt == nil {
-		return nil
+
+	var pct float64
+	computed := false
+
+	if rustclient.Available() {
+		if rt, err := rustclient.ComputeTrend(closes); err == nil && rt != nil {
+			pct = rt.QuarterPct
+			computed = true
+		}
 	}
-	return &qt.QuarterPct
+	if !computed {
+		qt := trend.FromCloses(closes)
+		if qt == nil {
+			return nil
+		}
+		pct = qt.QuarterPct
+	}
+
+	weekly := sampleWeekly(closes)
+	return &trendDataResult{Pct: pct, Closes: weekly}
+}
+
+func sampleWeekly(closes []float64) []float64 {
+	weekly := make([]float64, 0, 14)
+	step := 5
+	if len(closes) <= 14 {
+		step = 1
+	}
+	for i := 0; i < len(closes); i += step {
+		weekly = append(weekly, closes[i])
+	}
+	if len(closes) > 0 && (len(closes)-1)%step != 0 {
+		weekly = append(weekly, closes[len(closes)-1])
+	}
+	return weekly
 }
 
 func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]map[string]interface{} {
