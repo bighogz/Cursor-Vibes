@@ -10,6 +10,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
 	"github.com/bighogz/Cursor-Vibes/internal/sp500"
+	"github.com/bighogz/Cursor-Vibes/internal/trend"
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
 
@@ -94,8 +95,8 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 				hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
 			}
 		}
-		if chg := quarterChange(hist); chg != nil {
-			histBySym[sym] = chg
+		if qt := quarterTrendFromHist(hist); qt != nil {
+			histBySym[sym] = qt
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
@@ -198,20 +199,25 @@ func Build(limit int, asOf time.Time) map[string]interface{} {
 	return out
 }
 
-func quarterChange(hist []map[string]interface{}) *float64 {
+func quarterTrendFromHist(hist []map[string]interface{}) *float64 {
 	if len(hist) < 2 {
 		return nil
 	}
 	sort.Slice(hist, func(i, j int) bool {
 		return getStr(hist[i], "date") < getStr(hist[j], "date")
 	})
-	first := getFloat(hist[0], "close")
-	last := getFloat(hist[len(hist)-1], "close")
-	if first <= 0 {
+	closes := make([]float64, 0, len(hist))
+	for _, h := range hist {
+		c := getFloat(h, "close", "Close")
+		if c > 0 {
+			closes = append(closes, c)
+		}
+	}
+	qt := trend.FromCloses(closes)
+	if qt == nil {
 		return nil
 	}
-	chg := (last - first) / first * 100
-	return &chg
+	return &qt.QuarterPct
 }
 
 func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]map[string]interface{} {
