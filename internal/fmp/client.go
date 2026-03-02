@@ -4,7 +4,9 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -119,21 +121,95 @@ func (c *Client) GetSP500Tickers() []string {
 	return out
 }
 
-func (c *Client) GetInsiderSells(ticker string, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
-	params := url.Values{}
-	if ticker != "" {
-		params.Set("symbol", ticker)
+// GetInsiderSells fetches insider sell transactions. Uses /insider-trading/latest
+// (free-tier compatible) rather than /insider-trading/search (paid only).
+// When tickerFilter is non-nil, only records matching those tickers are returned.
+// GetInsiderSells fetches recent insider sells from /insider-trading/latest
+// (1 page on free tier), merges with a local cache file to accumulate data
+// over multiple runs, and returns all records matching the ticker filter.
+func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
+	freshRecords := c.fetchLatestInsiderPage(tickerFilter, dateFrom, dateTo)
+	cached := loadInsiderCache()
+	merged := mergeInsiderRecords(cached, freshRecords)
+	if len(freshRecords) > 0 {
+		saveInsiderCache(merged)
 	}
+	// Filter merged set by ticker and date
+	var out []models.InsiderSellRecord
+	for _, r := range merged {
+		t := strings.ToUpper(r.Ticker)
+		if tickerFilter != nil && !tickerFilter[t] {
+			continue
+		}
+		if !dateFrom.IsZero() && r.TransactionDate.Before(dateFrom) {
+			continue
+		}
+		if !dateTo.IsZero() && r.TransactionDate.After(dateTo) {
+			continue
+		}
+		out = append(out, r)
+	}
+	log.Printf("fmp insiders: fresh=%d cached=%d merged=%d filtered=%d", len(freshRecords), len(cached), len(merged), len(out))
+	return out
+}
+
+func (c *Client) fetchLatestInsiderPage(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
+	params := url.Values{}
 	params.Set("page", "0")
 	params.Set("limit", "100")
-	path := "/insider-trading/latest"
-	if ticker != "" {
-		path = "/insider-trading/search"
-	}
-	data, err := c.get(path, params)
+	data, err := c.get("/insider-trading/latest", params)
 	if err != nil || data == nil {
 		return nil
 	}
+	return parseInsiderRecords(data, nil, dateFrom, dateTo)
+}
+
+const insiderCachePath = "data/insider_cache.json"
+
+func loadInsiderCache() []models.InsiderSellRecord {
+	f, err := os.Open(insiderCachePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var records []models.InsiderSellRecord
+	json.NewDecoder(f).Decode(&records)
+	return records
+}
+
+func saveInsiderCache(records []models.InsiderSellRecord) {
+	os.MkdirAll("data", 0700)
+	f, err := os.OpenFile(insiderCachePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(records)
+}
+
+func mergeInsiderRecords(existing, fresh []models.InsiderSellRecord) []models.InsiderSellRecord {
+	seen := make(map[string]bool)
+	var out []models.InsiderSellRecord
+	add := func(r models.InsiderSellRecord) {
+		key := strings.ToUpper(r.Ticker) + "|" + r.TransactionDate.Format("2006-01-02") + "|" + fmt.Sprintf("%.0f", r.SharesSold)
+		if n := r.InsiderName; n != nil {
+			key += "|" + *n
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, r)
+		}
+	}
+	for _, r := range existing {
+		add(r)
+	}
+	for _, r := range fresh {
+		add(r)
+	}
+	return out
+}
+
+func parseInsiderRecords(data interface{}, tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
 	var items []interface{}
 	switch v := data.(type) {
 	case []interface{}:
@@ -160,14 +236,17 @@ func (c *Client) GetInsiderSells(ticker string, dateFrom, dateTo time.Time) []mo
 		if !ok {
 			continue
 		}
-		transType := strings.ToUpper(str(m["transactionType"]) + str(m["type"]))
 		acqDisp := strings.ToUpper(str(m["acquisitionOrDisposition"]) + str(m["acquiredDisposedCode"]))
-		isSell := transType == "S" || transType == "D" || acqDisp == "D" || strings.Contains(strings.ToLower(str(m["transactionType"])), "sale")
+		transType := strings.ToLower(str(m["transactionType"]))
+		isSell := acqDisp == "D" || strings.Contains(transType, "sale") || strings.ToUpper(str(m["transactionType"])) == "S"
 		if !isSell {
 			continue
 		}
-		tickerSym := strings.TrimSpace(strOr(m["symbol"], m["ticker"]) + ticker)
+		tickerSym := strings.TrimSpace(strings.ToUpper(strOr(m["symbol"], m["ticker"])))
 		if tickerSym == "" {
+			continue
+		}
+		if tickerFilter != nil && !tickerFilter[tickerSym] {
 			continue
 		}
 		txDate, ok := parseDate(strOr(m["transactionDate"], m["periodOfReport"], m["filingDate"]))
@@ -180,13 +259,14 @@ func (c *Client) GetInsiderSells(ticker string, dateFrom, dateTo time.Time) []mo
 		if !dateTo.IsZero() && txDate.After(dateTo) {
 			continue
 		}
-		shares := toFloat(m["numberOfShares"], m["shares"])
+		shares := toFloat(m["securitiesTransacted"], m["numberOfShares"], m["shares"])
 		if shares <= 0 {
 			continue
 		}
 		var valueUSD *float64
-		if v := toFloat(m["value"], m["valueUsd"]); v > 0 {
-			valueUSD = &v
+		if v := toFloat(m["price"]); v > 0 {
+			total := v * shares
+			valueUSD = &total
 		}
 		var filingDate *time.Time
 		if fd, ok := parseDate(strOr(m["filingDate"], m["filedAt"])); ok {

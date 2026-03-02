@@ -22,25 +22,13 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 	seen := make(map[string]bool)
 	all := make([]models.InsiderSellRecord, 0)
 
-	fmpLimit := len(tickers)
-	if config.FMPFreeTier && fmpLimit > 25 {
-		fmpLimit = 25
-	}
-	fmpTickers := tickers[:min(fmpLimit, len(tickers))]
-
 	if config.FMPAPIKey != "" {
-		client := fmp.New()
-		for _, t := range fmpTickers {
-			recs := client.GetInsiderSells(t, dateFrom, dateTo)
-			for _, r := range recs {
-				key := keyFor(r)
-				if !seen[key] {
-					seen[key] = true
-					all = append(all, r)
-				}
-			}
+		tickerSet := make(map[string]bool, len(tickers))
+		for _, t := range tickers {
+			tickerSet[strings.ToUpper(t)] = true
 		}
-		recs := client.GetInsiderSells("", dateFrom, dateTo)
+		client := fmp.New()
+		recs := client.GetInsiderSells(tickerSet, dateFrom, dateTo)
 		for _, r := range recs {
 			key := keyFor(r)
 			if !seen[key] {

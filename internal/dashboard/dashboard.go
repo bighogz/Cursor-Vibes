@@ -77,11 +77,6 @@ func Build(opts BuildOpts) map[string]interface{} {
 		}
 		trendNewsLimit = min(sample, len(companies))
 	}
-	insiderSample := 15
-	if !config.FMPFreeTier {
-		insiderSample = min(80, len(tickers))
-	}
-
 	quoteBySym := make(map[string]map[string]interface{})
 	yahooClient := yahoo.New()
 	fmpClient := fmp.New()
@@ -120,10 +115,16 @@ func Build(opts BuildOpts) map[string]interface{} {
 	}
 	log.Printf("dashboard Build: tickers=%d quoteBySym_keys=%d", len(tickers), len(quoteBySym))
 
-	insiderTickers := tickers[:min(insiderSample, len(tickers))]
+	// Fetch insider data for ALL S&P 500 tickers (not just the displayed subset)
+	// because /insider-trading/latest returns recent filings across all companies.
+	allTickers := make([]string, len(allCompanies))
+	for i, c := range allCompanies {
+		allTickers[i] = c.Symbol
+	}
 	var insiderRecords []models.InsiderSellRecord
 	if config.FMPAPIKey != "" {
-		insiderRecords = aggregator.AggregateInsiderSells(insiderTickers, dateFrom, dateTo)
+		insiderRecords = aggregator.AggregateInsiderSells(allTickers, dateFrom, dateTo)
+		log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
 	}
 	topInsiders := topInsidersByTicker(insiderRecords)
 
