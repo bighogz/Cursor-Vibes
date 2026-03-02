@@ -157,6 +157,7 @@ func (c *Client) fetchLatestInsiderPage(tickerFilter map[string]bool, dateFrom, 
 	params := url.Values{}
 	params.Set("page", "0")
 	params.Set("limit", "100")
+	params.Set("transactionType", "S-Sale")
 	data, err := c.get("/insider-trading/latest", params)
 	if err != nil || data == nil {
 		return nil
@@ -238,7 +239,7 @@ func parseInsiderRecords(data interface{}, tickerFilter map[string]bool, dateFro
 		}
 		acqDisp := strings.ToUpper(str(m["acquisitionOrDisposition"]) + str(m["acquiredDisposedCode"]))
 		transType := strings.ToLower(str(m["transactionType"]))
-		isSell := acqDisp == "D" || strings.Contains(transType, "sale") || strings.ToUpper(str(m["transactionType"])) == "S"
+		isSell := acqDisp == "D" || strings.Contains(transType, "sale") || strings.Contains(transType, "s-sale") || strings.HasPrefix(transType, "s") || acqDisp == "DD"
 		if !isSell {
 			continue
 		}
