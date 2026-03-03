@@ -8,29 +8,61 @@ on:
   workflow_dispatch:
 
 jobs:
-  sast:
-    name: "SAST (semgrep)"
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install semgrep
-      - run: semgrep scan --config p/default --config p/security-audit --config p/owasp-top-ten .
+
+  # ---------------------------------------------------------------------------
+  # GATED scanners — these BLOCK on findings (critical / high severity)
+  # ---------------------------------------------------------------------------
 
   govulncheck:
-    name: "Go Vulns (govulncheck)"
+    name: "Go Vulns (govulncheck) [GATE]"
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
+      - name: Run govulncheck (blocks on reachable vulns)
+        run: govulncheck ./...
+
+  cargo-audit:
+    name: "Rust Audit (cargo-audit) [GATE]"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit
+      - name: Run cargo-audit (blocks on advisories)
+        run: cargo audit --file rust-core/Cargo.lock
+
+  secrets:
+    name: "Secret Scan (gitleaks) [GATE]"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # ADVISORY scanners — findings are logged but do not block the workflow.
+  # Review findings in the Actions log and triage per SLA.
+  # ---------------------------------------------------------------------------
+
+  sast:
+    name: "SAST (semgrep) [advisory]"
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install semgrep
+      - name: Run semgrep (advisory — findings logged, does not block)
+        run: semgrep scan --config p/default --config p/security-audit --config p/owasp-top-ten .
 
   sca:
-    name: "SCA (osv-scanner)"
+    name: "SCA (osv-scanner) [advisory]"
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -39,26 +71,5 @@ jobs:
         with:
           go-version: stable
       - run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-      - run: osv-scanner scan --recursive . || true
-
-  cargo-audit:
-    name: "Rust Audit (cargo-audit)"
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit
-      - run: cargo audit --file rust-core/Cargo.lock
-
-  secrets:
-    name: "Secret Scan (gitleaks)"
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run osv-scanner (advisory — findings logged, does not block)
+        run: osv-scanner scan --recursive . || true

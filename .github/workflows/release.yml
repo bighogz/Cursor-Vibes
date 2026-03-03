@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            rust_target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build Go binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT}"
+          mkdir -p dist
+          go build -ldflags "${LDFLAGS}" -o dist/api ./cmd/api
+          go build -ldflags "${LDFLAGS}" -o dist/scan ./cmd/scan
+
+      - name: Build Rust binary
+        run: |
+          cargo build --release --manifest-path rust-core/Cargo.toml --target ${{ matrix.rust_target }}
+          cp rust-core/target/${{ matrix.rust_target }}/release/vibes-anomaly dist/ || true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: shasum -a 256 * | tee SHA256SUMS
+
+      - name: Package
+        run: |
+          ARCHIVE="vibes-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          tar czf "${ARCHIVE}.tar.gz" -C dist .
+          mv "${ARCHIVE}.tar.gz" dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          output-file: sbom-cyclonedx.json
+          format: cyclonedx-json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-cyclonedx.json
+
+  publish:
+    needs: [build, sbom]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          # Tarballs and checksums from each platform build
+          cp artifacts/release-linux-amd64/*.tar.gz release-assets/
+          cp artifacts/release-linux-amd64/SHA256SUMS release-assets/SHA256SUMS-linux-amd64
+          cp artifacts/release-darwin-arm64/*.tar.gz release-assets/
+          cp artifacts/release-darwin-arm64/SHA256SUMS release-assets/SHA256SUMS-darwin-arm64
+          # SBOM
+          cp artifacts/sbom/sbom-cyclonedx.json release-assets/
+          # Combined checksums
+          cat release-assets/SHA256SUMS-* > release-assets/SHA256SUMS
+          rm release-assets/SHA256SUMS-*
+
+      - name: Generate release notes
+        run: |
+          {
+            echo "## What's Changed"
+            echo ""
+            git log "$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)"..HEAD \
+              --pretty=format:"- %s (%h)" --no-merges
+            echo ""
+            echo ""
+            echo "## Verification"
+            echo ""
+            echo '```bash'
+            echo "# Verify checksums after download"
+            echo "shasum -a 256 -c SHA256SUMS"
+            echo '```'
+            echo ""
+            echo "SBOM (CycloneDX JSON) is attached as \`sbom-cyclonedx.json\`."
+          } > release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
