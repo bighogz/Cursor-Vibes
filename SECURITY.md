@@ -34,7 +34,7 @@ Instead, email **security@bighogz.dev** (or contact [@bighogz](https://github.co
 This project follows a structured vulnerability response process aligned with NIST SP 800-218 (SSDF) practice RV.1-RV.3 and NIST SP 800-53r5 controls RA-5, SA-11.
 
 1. **Identification (RV.1)**: Automated scanning via CI (semgrep, govulncheck, osv-scanner, cargo-audit, gitleaks) runs weekly and on every push. Manual reports accepted per the process above.
-2. **Triage (RV.2.1)**: Each vulnerability is analyzed for exploitability and impact using the component's threat model (see `docs/SECURITY_CONTROLS.md`).
+2. **Triage (RV.2.1)**: Each vulnerability is analyzed for exploitability and impact using the component's threat model (see `docs/security/threat-model.md`).
 3. **Remediation (RV.2.2)**: Fixes are developed, tested, and released according to the SLA table above. Security advisories are published for any fix that changes external behavior.
 4. **Root Cause Analysis (RV.3)**: After remediation, the root cause is documented and the SDLC is reviewed for process improvements to prevent recurrence.
 
@@ -56,4 +56,4 @@ This project implements controls from:
 - **NIST SP 800-53r5**: RA-5, SA-3, SA-8, SA-10, SA-11, SA-15, SI-10, SI-11, AU-12, CM-10(1), AC-17, SC-28
 - **NIST SP 800-218 (SSDF v1.1)**: PO.1-PO.5, PS.1-PS.3, PW.1-PW.9, RV.1-RV.3
 
-See `docs/SECURITY_CONTROLS.md` for the full controls matrix.
+See `docs/security/threat-model.md` for the full controls matrix.

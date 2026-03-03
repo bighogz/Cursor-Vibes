@@ -1,4 +1,4 @@
-.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev test checksums
+.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev test checksums demo
 
 VERSION  := $(shell cat VERSION 2>/dev/null || echo dev)
 COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -44,5 +44,8 @@ deps:
 checksums:
 	@cd bin && shasum -a 256 api vibes-anomaly 2>/dev/null | tee SHA256SUMS
 
+demo:
+	@./scripts/demo.sh
+
 clean:
-	rm -rf bin/ rust-core/target/ frontend/dist/ frontend/node_modules/
+	rm -rf bin/ rust-core/target/ frontend/dist/ frontend/node_modules/ out/

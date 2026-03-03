@@ -1,13 +1,40 @@
 # S&P 500 Insider Selling Tracker
 
 Real-time tracking of insider selling across all S&P 500 companies with anomaly detection.
-Built with **Go**, **Rust**, and a **React** frontend -- zero Python runtime dependency.
+Built with **Go**, **Rust**, and a **React** frontend — zero Python runtime dependency.
 
-Stock prices and quarterly trends are fetched via
-[go-yfinance](https://github.com/wnjoon/go-yfinance)
-(native Go with TLS fingerprint spoofing and Yahoo crumb/cookie auth).
-Anomaly detection and trend computation use a Rust binary for performance,
-with Go fallbacks when the binary isn't available.
+> **This is a portfolio project.** It's not deployed. The code is the deliverable.
+> Run `make demo` for a self-contained local proof, or read on for the thinking behind it.
+
+---
+
+## How I Think About This
+
+This repo is designed to communicate engineering judgment, not just working code.
+A few principles that shaped every decision:
+
+- **Tight feedback loops.** `make demo` builds everything, starts the server, runs a
+  sample request, and writes output artifacts — in one command. If it breaks, you know
+  in under a minute.
+- **Treat security as requirements, not polish.** Input validation, auth, logging, and
+  dependency scanning are implemented from the start, not bolted on. They're tested the
+  same way features are tested.
+- **Evidence over claims.** Every security control has a file path and a test.
+  Every architectural choice has a written rationale. "I thought about it" is backed
+  by artifacts, not hand-waving.
+- **Graceful degradation everywhere.** Rust binary missing? Go fallback runs.
+  FMP API rate-limited? Yahoo takes over. Cache stale? Rebuild on demand.
+  No single failure should break the whole system.
+
+### Guided tour (2–3 minutes)
+
+If you're reviewing this repo, read in this order:
+
+1. **This README** — mental model, architecture, quick start
+2. **[docs/design.md](docs/design.md)** — tradeoffs, constraints, non-goals, what I'd change
+3. **[docs/security/](docs/security/)** — threat model, controls matrix, secure defaults
+4. **[docs/ops-lite.md](docs/ops-lite.md)** — how I'd deploy this (explicitly: not deployed)
+5. **[docs/decisions/](docs/decisions/)** — ADRs: why Go, why Rust, why these frameworks
 
 ---
 
@@ -16,6 +43,12 @@ with Go fallbacks when the binary isn't available.
 ```bash
 # Prerequisites: Go 1.23+, Node.js 18+, Rust (optional — rustup.rs)
 cp .env.example .env        # add your FMP_API_KEY
+make demo                    # builds, starts, samples, writes ./out/
+```
+
+Or step by step:
+
+```bash
 make build                   # Go API + Rust binary + React frontend
 ./bin/api                    # http://localhost:8000
 ```
@@ -63,11 +96,13 @@ make build                   # Go API + Rust binary + React frontend
 | `internal/config` | Go | Environment loading via `sync.Once` |
 | `rust-core` | Rust | `vibes-anomaly` binary: anomaly + trend subcommands |
 
+For *why* this shape, see [docs/design.md](docs/design.md).
+
 ---
 
 ## Frontend
 
-The UI is a Linear-inspired React SPA with:
+The UI is a Linear-inspired React SPA:
 
 - **Sidebar** — Navigation + collapsible sector filter groups
 - **DataTable** — Dense rows with sector headers, prices, sparklines, news, insider sellers
@@ -134,11 +169,10 @@ Yahoo Finance handles prices, trends, and news with no API key.
 5. **Build and run**:
 
    ```bash
+   make demo        # full build + sample request + output artifacts
+   # Or manually:
    make build       # Go + Rust + React frontend → bin/ + frontend/dist/
    ./bin/api        # http://localhost:8000
-
-   # Or with 1Password:
-   make go-run-op   # op run injects secrets, no .env needed
    ```
 
 ---
@@ -156,7 +190,7 @@ Yahoo Finance handles prices, trends, and news with no API key.
 | `EODHD_API_KEY` | *(optional)* | EODHD API key |
 | `PORT` | `8000` | HTTP listen port |
 
-See [docs/SECURE_DEFAULTS.md](docs/SECURE_DEFAULTS.md) for the full security-impact analysis of every setting.
+See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the full security-impact analysis of every setting.
 
 ---
 
@@ -208,85 +242,80 @@ and insider table. Selection is preserved in the URL (`?stock=AAPL`).
 
 ---
 
-## Deployment
+## Security
 
-The application is a **single Go binary** (`bin/api`) that serves both the JSON API
-and the pre-built React SPA from `frontend/dist/`. No separate web server is needed
-for development or small-scale deployments.
+These checks run in CI to demonstrate my default hygiene — SAST, dependency vulnerability
+scanning, secret scanning, SBOM generation. They're habits I apply to every project,
+not compliance theater for a portfolio repo.
 
-### Recommended production setup
+For the full reasoning, see [docs/decisions/0003-threat-model-scope.md](docs/decisions/0003-threat-model-scope.md).
 
-```
-Internet → Reverse Proxy (nginx / Caddy / cloud LB)
-               │  TLS termination
-               │  rate limiting (optional, complements built-in)
-               ▼
-           ./bin/api  (:8000)
-               │  serves /api/* + React SPA
-               │  reads .env or 1Password-injected env
-               ▼
-           data/   (cache files, auto-created)
-```
+### What's implemented (and why)
 
-### Environment variables
-
-Set the variables listed in [Configuration](#configuration) via `.env`, 1Password CLI,
-or your hosting platform's secret store. At minimum: `FMP_API_KEY`.
-
-### Cache and data files
-
-| Path | Purpose | Permissions |
+| Category | What | Why it matters even here |
 |---|---|---|
-| `data/dashboard_cache.json` | Cached dashboard payload (24 h TTL) | Read/write by API process |
-| `data/insider_cache.json` | Accumulated FMP insider records | Read/write by API process |
+| **Input validation** | GICS enum check, numeric bounds, path traversal guard | Prevents bugs and demonstrates defense-in-depth thinking |
+| **Auth** | `ADMIN_API_KEY` via `crypto/subtle.ConstantTimeCompare` | Shows I know timing attacks exist and how to prevent them |
+| **Structured errors** | JSON error responses, no stack traces | Production habit — never leak internals |
+| **Security headers** | CSP, X-Frame-Options, X-Content-Type-Options | Applied via middleware, costs nothing |
+| **Audit logging** | Unique `X-Request-Id`, method/path/status/duration per request | Observable by default |
+| **Rate limiting** | Per-IP scan throttle, refresh debounce | Prevents accidental self-DDoS during development |
+| **Secrets management** | 1Password CLI integration, `.env` gitignored | API keys have real financial cost if leaked |
 
-Both files are auto-created on first run. Delete them to force a full rebuild.
-The `data/` directory must be writable by the process.
+### CI pipelines
 
-### Reverse proxy (nginx example)
+**Build workflow** (`.github/workflows/ci.yml`) — every push / PR:
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name vibes.example.com;
+| Step | Purpose |
+|---|---|
+| `go vet` + `go test -race` | Static analysis + tests with data race detection |
+| `cargo test` | Rust tests |
+| `npm run build` | Frontend build verification |
+| SBOM generation | CycloneDX SBOM via `anchore/sbom-action` |
 
-    ssl_certificate     /etc/ssl/certs/vibes.pem;
-    ssl_certificate_key /etc/ssl/private/vibes.key;
+**Security workflow** (`.github/workflows/security.yml`) — weekly + on push:
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+| Scanner | What it checks |
+|---|---|
+| **semgrep** | SAST — OWASP Top 10 + security-audit rules across Go, Rust, JS/TS |
+| **govulncheck** | Go dependency vulns with symbol-level reachability analysis |
+| **osv-scanner** | SCA across `go.mod`, `Cargo.lock`, `package-lock.json` |
+| **cargo-audit** | Rust crate advisory database |
+| **gitleaks** | Secret detection in working tree + git history |
 
-### Running as a systemd service
+**Release workflow** (`.github/workflows/release.yml`) — on tag push:
+builds cross-platform binaries, generates SHA256 checksums and SBOM, creates a GitHub Release.
 
-```ini
-[Unit]
-Description=Vibes S&P 500 Insider Tracker
-After=network.target
+### Deeper reading
 
-[Service]
-Type=simple
-WorkingDirectory=/opt/vibes
-ExecStart=/opt/vibes/bin/api
-EnvironmentFile=/opt/vibes/.env
-Restart=on-failure
-RestartSec=5
+- **[docs/security/threat-model.md](docs/security/threat-model.md)** — SSDF + 800-53 controls matrix, trust boundaries, top threats
+- **[docs/security/secure-defaults.md](docs/security/secure-defaults.md)** — Every config setting with security impact analysis
+- **[SECURITY.md](SECURITY.md)** — Vulnerability disclosure policy and response SLAs
 
-[Install]
-WantedBy=multi-user.target
-```
+---
+
+## Decision Records
+
+Architectural decisions are documented as ADRs in [docs/decisions/](docs/decisions/):
+
+| ADR | Decision |
+|---|---|
+| [0001](docs/decisions/0001-why-go-api.md) | Why Go for the API (not Python, not Node) |
+| [0002](docs/decisions/0002-why-rust-binary.md) | Why a Rust subprocess for anomaly detection |
+| [0003](docs/decisions/0003-threat-model-scope.md) | Threat model scope and security framework choices |
 
 ---
 
 ## Project Layout
 
 ```
+docs/
+  design.md              Tradeoffs, constraints, non-goals
+  ops-lite.md            How I'd deploy this (not deployed)
+  decisions/             Architecture Decision Records (ADRs)
+  security/
+    threat-model.md      SSDF + 800-53 controls matrix, threat model
+    secure-defaults.md   All config settings with security impact
 frontend/                React + TypeScript + Tailwind SPA
   src/components/        AppShell, SidebarNav, DataTable, DetailDrawer, CommandPalette
   src/pages/             Dashboard, Scan, Settings
@@ -310,11 +339,11 @@ rust-core/
   src/anomaly.rs         Z-score detection
   src/trend.rs           Quarterly trend (linear regression)
   src/models.rs          InsiderSellRecord
+scripts/
+  demo.sh               Local demo runner (make demo)
 static/                  Legacy dashboard UI (fallback)
 data/                    Runtime cache files (gitignored)
-docs/
-  SECURITY_CONTROLS.md   SSDF + 800-53 controls matrix, threat model
-  SECURE_DEFAULTS.md     All config settings with security impact
+out/                     Demo output artifacts (gitignored)
 CODEOWNERS               Code ownership and review requirements
 SECURITY.md              Vulnerability disclosure policy and SLAs
 LICENSE                  MIT license
@@ -326,99 +355,11 @@ LICENSE                  MIT license
 
 ---
 
-## Security
-
-Aligned to **NIST SP 800-218 (SSDF v1.1)** for secure development practices
-and **NIST SP 800-53r5** for operational security controls.
-The two frameworks complement each other to provide defense-in-depth
-from code through deployment.
-
-- **[SECURITY.md](SECURITY.md)** — Vulnerability disclosure policy and response SLAs
-- **[docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md)** — Full SSDF + 800-53 controls matrix, threat model, and release criteria
-- **[docs/SECURE_DEFAULTS.md](docs/SECURE_DEFAULTS.md)** — All configuration settings with security impact analysis
-
-### Governance (SSDF PO.1 / PO.2)
-
-- `CODEOWNERS` assigns review ownership; security-sensitive paths require explicit approval
-- `LICENSE` (MIT) and `SECURITY.md` with disclosure process and triage SLAs
-- Release criteria defined in `docs/SECURITY_CONTROLS.md` (PO.4.1)
-
-### CI pipelines (SSDF PO.3, PW.7, PS.3)
-
-**Build workflow** (`.github/workflows/ci.yml`) — every push / PR:
-
-| Step | Purpose |
-|---|---|
-| `go vet ./...` | Static analysis (PW.7) |
-| `go test -race` | Unit tests with data race detection (PW.8) |
-| `cargo test` | Rust tests (PW.8) |
-| `npm run build` | Frontend build verification |
-| SBOM generation | CycloneDX SBOM via `anchore/sbom-action` (PS.3 / SR-4) |
-
-**Security workflow** (`.github/workflows/security.yml`) — weekly + on push:
-
-| Scanner | Scope | Gate |
-|---|---|---|
-| **semgrep** | SAST — Go, Rust, JS/TS (OWASP Top 10 + security-audit) | Advisory |
-| **govulncheck** | Go dependency vulns with symbol-level reachability | **Blocks on findings** |
-| **osv-scanner** | SCA across `go.mod`, `Cargo.lock`, `package-lock.json` | Advisory |
-| **cargo-audit** | Rust crate advisory database | **Blocks on findings** |
-| **gitleaks** | Secret detection in working tree + git history | **Blocks on findings** |
-
-> govulncheck, cargo-audit, and gitleaks run without `continue-on-error` —
-> a finding in any of them blocks the workflow and requires triage.
-> semgrep and osv-scanner remain advisory (may flag known-accepted items).
-
-Triage SLAs: Critical 7 d, High 14 d, Medium 30 d, Low next release.
-
-### Release integrity (SSDF PS.2)
-
-- Version + commit hash embedded in binaries via `-ldflags` and exposed at `/api/health`
-- `make checksums` generates SHA256 sums for all binary artifacts
-- CycloneDX SBOM generated and archived as a CI artifact per build
-- **GitHub Releases** created automatically on tag push via `.github/workflows/release.yml` — includes compiled binaries, checksums, and SBOM
-
-### Runtime hardening (800-53 controls)
-
-- **HTTP server timeouts** — ReadHeader 10 s, Read 30 s, Write 120 s, Idle 60 s
-- **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
-- **Request audit logging (AU-12)** — Every request gets a unique `X-Request-Id`; method, path, status, and duration are logged
-- **Input validation (SI-10)** — `sector` validated against GICS enum; `limit` bounded [0, 600]; all numeric params clamped; bad input returns structured 400 JSON
-- **Auth (SA-10)** — `ADMIN_API_KEY` checked via `crypto/subtle.ConstantTimeCompare` (timing-attack resistant)
-- **Rate limiting** — Scan 1 req / 5 s per IP; refresh debounce 5 min
-- **Path traversal protection** — `safeStaticPath()` + `..` rejection
-- **Binary validation** — `VIBES_ANOMALY_BIN` must resolve under project root
-- **Concurrency control** — Yahoo request semaphore (cap 8)
-- **Config isolation** — All config loaded via `config.Load()` with `sync.Once`
-- **Dependency scanning** — 0 known vulnerabilities (govulncheck, cargo-audit, osv-scanner)
-
-### Controls matrix summary
-
-| SSDF Practice | 800-53 Control | Status |
-|---|---|---|
-| PO.1 Security requirements | SA-8 | Done |
-| PO.2 Roles & ownership | SA-3 | Done |
-| PO.3 Toolchains | RA-5, SA-11 | Done |
-| PS.2 Release integrity | SA-10, SR-4 | Done |
-| PS.3 Archive releases | SR-4 | Done |
-| PW.5 Secure coding | SI-10, SI-11 | Done |
-| PW.7 Code analysis | SA-11 | Done |
-| PW.8 Testing | SA-11 | Done |
-| PW.9 Secure defaults | SA-8(23) | Done |
-| RV.1 Identify vulns | RA-5 | Done |
-| AU-12 Audit logging | AU-12 / AU-11 | Done |
-| AC-17 Remote access auth | AC-17(2) | Done |
-| SC-28 Protection at rest | SC-28(1) | Done |
-| CM-10 Dependency governance | CM-10(1) | Done |
-
-See [docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md) for the full matrix with file-level evidence and threat model.
-
----
-
 ## Build Targets
 
 ```bash
 make build          # Go + Rust + React frontend (full build)
+make demo           # Build + start + sample request + output to ./out/
 make go-build       # Go binaries only (version + commit embedded via ldflags)
 make rust-build     # Rust binary only
 make frontend       # React frontend only (npm install + build)
@@ -428,7 +369,7 @@ make go-run         # Build Go + run API
 make go-run-op      # Build Go + run API with 1Password secrets injection
 make checksums      # SHA256 sums for bin/ artifacts
 make deps           # go mod download + npm install
-make clean          # Remove bin/, rust-core/target/, frontend/dist/
+make clean          # Remove bin/, rust-core/target/, frontend/dist/, out/
 ```
 
 ---

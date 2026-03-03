@@ -1,6 +1,6 @@
-# Security Controls Matrix
+# Threat Model & Security Controls
 
-Unified mapping of **NIST SP 800-218 (SSDF v1.1)** practices to **NIST SP 800-53r5** controls, with implementation status and evidence artifacts for the Vibes project.
+Unified mapping of **NIST SP 800-218 (SSDF v1.1)** practices to **NIST SP 800-53r5** controls, with implementation status, evidence artifacts, and threat model for the Vibes project.
 
 ## Framework Alignment Overview
 
@@ -19,11 +19,11 @@ Together, they ensure that security is embedded from code through deployment and
 
 | SSDF Practice | 800-53 Control | Status | Evidence / Artifact |
 |---|---|---|---|
-| **PO.1** Security requirements | SA-8 | Done | `SECURITY.md`, `docs/SECURITY_CONTROLS.md` (this file) |
+| **PO.1** Security requirements | SA-8 | Done | `SECURITY.md`, `docs/security/threat-model.md` (this file) |
 | **PO.2** Roles and responsibilities | SA-3 | Done | `CODEOWNERS` assigns ownership for all paths; security-sensitive paths require explicit review |
 | **PO.3** Toolchains | RA-5, SA-11 | Done | `.github/workflows/security.yml` (semgrep, govulncheck, osv-scanner, cargo-audit, gitleaks), `.github/workflows/ci.yml` (go vet, go test -race) |
 | **PO.4** Check criteria | SA-15 | Done | Release criteria defined below in "Security Check Criteria" section |
-| **PO.5** Secure environments | SA-8(23) | Done | `docs/SECURE_DEFAULTS.md`, `.env.tpl` for 1Password injection, `.gitignore` excludes secrets |
+| **PO.5** Secure environments | SA-8(23) | Done | `docs/security/secure-defaults.md`, `.env.tpl` for 1Password injection, `.gitignore` excludes secrets |
 
 ### PS: Protect the Software
 
@@ -43,7 +43,7 @@ Together, they ensure that security is embedded from code through deployment and
 | **PW.6** Build configuration | SA-10 | Done | `Makefile` with `-ldflags`, reproducible build targets, `VERSION` file |
 | **PW.7** Code analysis | SA-11 | Done | `go vet ./...` in CI, `semgrep` SAST in security workflow, `go test -race` for data race detection |
 | **PW.8** Testing | SA-11 | Done | `cmd/api/middleware_test.go`, `cmd/api/main_helpers_test.go`, `internal/config/config_test.go`, `cargo test` for Rust |
-| **PW.9** Secure defaults | SA-8(23) | Done | `docs/SECURE_DEFAULTS.md` documents all config, timeouts, rate limits, and their security impact |
+| **PW.9** Secure defaults | SA-8(23) | Done | `docs/security/secure-defaults.md` documents all config, timeouts, rate limits, and their security impact |
 
 ### RV: Respond to Vulnerabilities
 
@@ -71,7 +71,7 @@ Together, they ensure that security is embedded from code through deployment and
 ### SA-8: Security and Privacy Engineering Principles
 
 - **Implementation**: Defense-in-depth (Go input validation + Rust computation isolation + frontend CSP), least privilege (rate limiting, admin-only endpoints), fail-secure defaults
-- **Artifact**: `docs/SECURE_DEFAULTS.md`, `cmd/api/middleware.go`
+- **Artifact**: `docs/security/secure-defaults.md`, `cmd/api/middleware.go`
 
 ### SA-10: Developer Configuration Management
 
@@ -185,5 +185,5 @@ The following must pass before any release:
 - [ ] SBOM generated and archived as CI artifact
 - [ ] SHA256 checksums generated for binary artifacts
 - [ ] No secrets detected by gitleaks
-- [ ] `SECURITY.md` and `SECURITY_CONTROLS.md` are up to date
+- [ ] `SECURITY.md` and `docs/security/threat-model.md` are up to date
 - [ ] Version tag matches `VERSION` file
