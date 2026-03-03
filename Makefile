@@ -1,10 +1,18 @@
-.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev
+.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev test checksums
+
+VERSION  := $(shell cat VERSION 2>/dev/null || echo dev)
+COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS  := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
 build: go-build rust-build frontend
 
 go-build:
-	go build -o bin/api ./cmd/api
+	go build -ldflags "$(LDFLAGS)" -o bin/api ./cmd/api
 	go build -o bin/scan ./cmd/scan
+
+test:
+	go vet ./...
+	go test ./... -count=1 -race
 
 rust-build:
 	@command -v cargo >/dev/null 2>&1 || { echo "Install Rust: https://rustup.rs"; exit 1; }
@@ -32,6 +40,9 @@ deps:
 	go mod download
 	go mod tidy
 	cd frontend && npm install
+
+checksums:
+	@cd bin && shasum -a 256 api vibes-anomaly 2>/dev/null | tee SHA256SUMS
 
 clean:
 	rm -rf bin/ rust-core/target/ frontend/dist/ frontend/node_modules/

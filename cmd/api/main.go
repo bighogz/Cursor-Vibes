@@ -20,6 +20,11 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
 	config.Load()
 	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))
@@ -318,7 +323,11 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, map[string]string{"status": "ok"})
+	jsonResponse(w, map[string]string{
+		"status":  "ok",
+		"version": version,
+		"commit":  commit,
+	})
 }
 
 func handleProviders(w http.ResponseWriter, r *http.Request) {

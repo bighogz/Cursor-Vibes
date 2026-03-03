@@ -203,16 +203,44 @@ rust-core/
   src/trend.rs          Quarterly trend (linear regression)
   src/models.rs         InsiderSellRecord
 static/                 Legacy dashboard UI (fallback)
-docs/                   Security controls, audit, API call docs
+docs/
+  SECURITY_CONTROLS.md  SSDF + 800-53 controls matrix, threat model
+  SECURE_DEFAULTS.md    All config settings with security impact
+CODEOWNERS              Code ownership and review requirements
+SECURITY.md             Vulnerability disclosure policy and SLAs
+LICENSE                 MIT license
+.github/workflows/
+  ci.yml                Build + test + SBOM (push/PR)
+  security.yml          Security scanners (weekly + push)
 ```
 
 ## Security
 
-Aligned to a curated subset of [NIST SP 800-53r5](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r5.pdf). See [docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md) for the full controls checklist and threat model.
+Aligned to **NIST SP 800-218 (SSDF v1.1)** for secure development practices and **NIST SP 800-53r5** for operational security controls. The two frameworks complement each other to provide defense-in-depth from code through deployment.
 
-### CI security pipeline (RA-5)
+- **[SECURITY.md](SECURITY.md)** — Vulnerability disclosure policy and response SLAs
+- **[docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md)** — Full SSDF + 800-53 controls matrix, threat model, and release criteria
+- **[docs/SECURE_DEFAULTS.md](docs/SECURE_DEFAULTS.md)** — All configuration settings with security impact analysis
 
-Every push and PR runs five automated scanners:
+### Governance (SSDF PO.1/PO.2)
+
+- `CODEOWNERS` assigns review ownership; security-sensitive paths require explicit approval
+- `LICENSE` (MIT) and `SECURITY.md` with disclosure process and triage SLAs
+- Release criteria defined in `docs/SECURITY_CONTROLS.md` (PO.4.1)
+
+### CI pipelines (SSDF PO.3, PW.7, PS.3)
+
+**Build workflow** (`.github/workflows/ci.yml`) — every push/PR:
+
+| Step | Purpose |
+|------|---------|
+| `go vet ./...` | Static analysis (PW.7) |
+| `go test -race` | Unit tests with data race detection (PW.8) |
+| `cargo test` | Rust tests (PW.8) |
+| `npm run build` | Frontend build verification |
+| SBOM generation | CycloneDX SBOM via `anchore/sbom-action` (PS.3/SR-4) |
+
+**Security workflow** (`.github/workflows/security.yml`) — weekly + on push:
 
 | Scanner | Scope |
 |---------|-------|
@@ -224,7 +252,13 @@ Every push and PR runs five automated scanners:
 
 Triage SLAs: Critical 7d, High 14d, Medium 30d, Low next release.
 
-### Runtime hardening
+### Release integrity (SSDF PS.2)
+
+- Version + commit hash embedded in binaries via `-ldflags` and exposed at `/api/health`
+- `make checksums` generates SHA256 sums for all binary artifacts
+- CycloneDX SBOM generated and archived as a CI artifact per build
+
+### Runtime hardening (800-53 controls)
 
 - **HTTP server timeouts**: ReadHeader 10s, Read 30s, Write 120s, Idle 60s
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
@@ -238,30 +272,39 @@ Triage SLAs: Critical 7d, High 14d, Medium 30d, Low next release.
 - **Config isolation**: All config loaded via `config.Load()` with `sync.Once`
 - **Dependency scanning**: 0 known vulnerabilities (govulncheck, cargo-audit, osv-scanner)
 
-### Controls checklist (NIST 800-53r5 subset)
+### Controls matrix summary
 
-| Control | ID | Status |
-|---------|-----|--------|
-| Automated vuln scanning in CI | RA-5 | Done |
-| Secure SDLC + threat model | SA-10/SA-15 | Done |
-| Dependency governance (pin + scan) | CM-10(1) | Done |
-| Input validation + injection prevention | SI-10 | Done |
-| Robust error handling | SI-11 | Done |
-| Structured audit logs + retention | AU-12/AU-11 | Done |
-| Encrypt in transit/at rest | AC-17/SC-28 | Documented |
+| SSDF Practice | 800-53 Control | Status |
+|---|---|---|
+| PO.1 Security requirements | SA-8 | Done |
+| PO.2 Roles & ownership | SA-3 | Done |
+| PO.3 Toolchains | RA-5, SA-11 | Done |
+| PS.2 Release integrity | SA-10, SR-4 | Done |
+| PS.3 Archive releases | SR-4 | Done |
+| PW.5 Secure coding | SI-10, SI-11 | Done |
+| PW.7 Code analysis | SA-11 | Done |
+| PW.8 Testing | SA-11 | Done |
+| PW.9 Secure defaults | SA-8(23) | Done |
+| RV.1 Identify vulns | RA-5 | Done |
+| AU-12 Audit logging | AU-12/AU-11 | Done |
+| AC-17 Remote access auth | AC-17(2) | Done |
+| SC-28 Protection at rest | SC-28(1) | Done |
+| CM-10 Dependency governance | CM-10(1) | Done |
 
-See also: [docs/SECURITY_PERFORMANCE_AUDIT.md](docs/SECURITY_PERFORMANCE_AUDIT.md) for the full code-level audit.
+See [docs/SECURITY_CONTROLS.md](docs/SECURITY_CONTROLS.md) for the full matrix with file-level evidence and threat model.
 
 ## Build targets
 
 ```bash
 make build          # Go + Rust + React frontend (full build)
-make go-build       # Go binaries only
+make go-build       # Go binaries only (version+commit embedded via ldflags)
 make rust-build     # Rust binary only
 make frontend       # React frontend only (npm install + build)
 make frontend-dev   # Vite dev server with hot reload
+make test           # go vet + go test -race
 make go-run         # Build Go + run API
 make go-run-op      # Build Go + run API with 1Password secrets injection
+make checksums      # SHA256 sums for bin/ artifacts
 make deps           # go mod download + npm install
 make clean          # Remove bin/, rust-core/target/, frontend/dist/
 ```

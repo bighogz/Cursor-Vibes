@@ -1,0 +1,10 @@
+# Default owner for all files
+* @bighogz
+
+# Security-sensitive paths require explicit review
+/cmd/api/middleware.go @bighogz
+/internal/config/ @bighogz
+/internal/rustclient/ @bighogz
+/internal/httpclient/ @bighogz
+/.github/workflows/ @bighogz
+/.env.example @bighogz
