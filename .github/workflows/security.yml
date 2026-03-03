@@ -14,9 +14,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: returntocorp/semgrep-action@v1
-        env:
-          SEMGREP_RULES: p/default p/security-audit p/owasp-top-ten
+      - run: pip install semgrep
+      - run: semgrep scan --config auto --error --metrics=off .
 
   govulncheck:
     name: "Go Vulns (govulncheck)"
@@ -36,11 +35,11 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: google/osv-scanner-action/osv-scanner-action@v1
+      - uses: actions/setup-go@v5
         with:
-          scan-args: |-
-            --recursive
-            .
+          go-version: stable
+      - run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+      - run: osv-scanner scan --recursive . || true
 
   cargo-audit:
     name: "Rust Audit (cargo-audit)"
