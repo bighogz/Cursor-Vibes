@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pip install semgrep
-      - run: semgrep scan --config auto --error --metrics=off .
+      - run: semgrep scan --config p/default --config p/security-audit --config p/owasp-top-ten --error .
 
   govulncheck:
     name: "Go Vulns (govulncheck)"
