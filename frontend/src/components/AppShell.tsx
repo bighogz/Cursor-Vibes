@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useSearchParams } from "react-router-dom";
 import { SidebarNav } from "./SidebarNav";
 import { CommandPalette } from "./CommandPalette";
@@ -7,10 +7,12 @@ import { ToastContainer } from "./Toast";
 import { fetchDashboard } from "../lib/api";
 import type { Company, DashboardData } from "../types/dashboard";
 
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
 export function AppShell() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [fullData, setFullData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -18,34 +20,63 @@ export function AppShell() {
   const sector = searchParams.get("sector") ?? "";
   const selectedStock = searchParams.get("stock") ?? "";
 
-  const load = useCallback(
-    async (s?: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const sectorParam = s !== undefined ? s : sector;
-        const d = await fetchDashboard(sectorParam || undefined, 50);
-        if (d.error) {
-          setError(d.error);
-        }
-        setData(d);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load dashboard");
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await fetchDashboard();
+      if (d.error) {
+        setError(d.error);
       }
-    },
-    [sector]
-  );
+      setFullData(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
+  // Fetch full dataset once on mount; refresh periodically in background.
   useEffect(() => {
     if (location.pathname === "/" || location.pathname === "") {
       load();
     }
   }, [location.pathname, load]);
 
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetchDashboard()
+        .then((d) => {
+          setFullData(d);
+          if (d.error) setError(d.error);
+        })
+        .catch(() => {});
+    }, REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Client-side sector filter — instant, no network call.
+  const data = useMemo((): DashboardData | null => {
+    if (!fullData) return null;
+    if (!sector) return fullData;
+
+    const lowerSector = sector.toLowerCase();
+    const filteredSectors = fullData.sectors.filter(
+      (s) => s.name.toLowerCase() === lowerSector,
+    );
+    const total = filteredSectors.reduce(
+      (acc, s) => acc + s.companies.length,
+      0,
+    );
+    return {
+      ...fullData,
+      sectors: filteredSectors,
+      total_companies: total,
+    };
+  }, [fullData, sector]);
+
   const allCompanies: Company[] =
-    data?.sectors?.flatMap((s) => s.companies) ?? [];
+    fullData?.sectors?.flatMap((s) => s.companies) ?? [];
 
   const selectedCompany = selectedStock
     ? allCompanies.find((c) => c.symbol === selectedStock) ?? null
@@ -60,7 +91,6 @@ export function AppShell() {
     }
     next.delete("stock");
     setSearchParams(next);
-    load(s);
   };
 
   const handleSelectStock = (sym: string) => {
@@ -97,7 +127,7 @@ export function AppShell() {
   return (
     <div className="flex h-screen overflow-hidden bg-surface-0">
       <SidebarNav
-        sectors={data?.available_sectors ?? []}
+        sectors={fullData?.available_sectors ?? []}
         activeSector={sector}
         onSectorChange={handleSectorChange}
         onOpenCommandPalette={() => setCmdOpen(true)}

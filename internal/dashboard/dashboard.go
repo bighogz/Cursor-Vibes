@@ -4,6 +4,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bighogz/Cursor-Vibes/internal/aggregator"
@@ -16,7 +17,8 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
 
-// BuildOpts controls which companies get trend/news. Filter by sector first, then limit.
+// BuildOpts controls the dashboard build. When Sector/Limit are empty,
+// Build produces the full S&P 500 dataset (used by the background refresher).
 type BuildOpts struct {
 	Sector string
 	Limit  int
@@ -28,7 +30,6 @@ func Build(opts BuildOpts) map[string]interface{} {
 	if len(allCompanies) == 0 {
 		return map[string]interface{}{"error": "Could not load S&P 500", "sectors": []interface{}{}}
 	}
-	// Collect sector names for frontend dropdown (before filtering)
 	seen := make(map[string]bool)
 	availableSectors := make([]string, 0)
 	for _, c := range allCompanies {
@@ -43,7 +44,6 @@ func Build(opts BuildOpts) map[string]interface{} {
 	}
 	sort.Strings(availableSectors)
 	companies := allCompanies
-	// Filter by sector first, then apply limit to that subset
 	if opts.Sector != "" {
 		filtered := make([]sp500.Company, 0)
 		for _, c := range companies {
@@ -66,14 +66,14 @@ func Build(opts BuildOpts) map[string]interface{} {
 	dateFrom := asOf.AddDate(0, 0, -totalDays)
 	dateTo := asOf
 
-	// When filtering by sector/limit, compute trend/news for all in subset (companies being viewed).
-	// Otherwise sample first N from full CSV. Price is fetched for all; trend/news are per-symbol and
-	// rate-limited, so only the first sample get them. "Trend/news still blank" for most rows is expected.
+	// Trend/news sample size. Since Build() runs in the background (not on the
+	// request path), we can afford a larger sample. Sector-filtered builds fetch
+	// all companies in the sector.
 	trendNewsLimit := len(companies)
 	if opts.Sector == "" && opts.Limit <= 0 {
-		sample := 10
+		sample := 50
 		if !config.FMPFreeTier {
-			sample = min(50, len(companies))
+			sample = min(200, len(companies))
 		}
 		trendNewsLimit = min(sample, len(companies))
 	}
@@ -82,10 +82,8 @@ func Build(opts BuildOpts) map[string]interface{} {
 	fmpClient := fmp.New()
 	providerStatus := make(map[string]string)
 
-	// Use Yahoo for quotes when no FMP key or on FMP free tier (avoid rate limit).
-	// Otherwise try FMP first; fall back to Yahoo on rate limit or error.
 	useYahooForQuotes := config.FMPAPIKey == "" || config.FMPFreeTier
-	batchSize := 100 // both fmpClient.GetQuote and yahooClient.GetQuote support up to 100
+	batchSize := 100
 
 	for i := 0; i < len(tickers); i += batchSize {
 		batch := tickers[i:min(i+batchSize, len(tickers))]
@@ -104,19 +102,14 @@ func Build(opts BuildOpts) map[string]interface{} {
 			if sym, ok := q["symbol"].(string); ok && sym != "" {
 				sym = strings.TrimSpace(sym)
 				quoteBySym[sym] = q
-				// Store under both BRK.B and BRK-B so lookups work for either form
 				if alt := yahoo.ToYahooSymbol(sym); alt != sym {
 					quoteBySym[alt] = q
 				}
 			}
 		}
-		// a little breathing room; yfinance batch is heavy
-		time.Sleep(150 * time.Millisecond)
 	}
 	log.Printf("dashboard Build: tickers=%d quoteBySym_keys=%d", len(tickers), len(quoteBySym))
 
-	// Fetch insider data for ALL S&P 500 tickers (not just the displayed subset)
-	// because /insider-trading/latest returns recent filings across all companies.
 	allTickers := make([]string, len(allCompanies))
 	for i, c := range allCompanies {
 		allTickers[i] = c.Symbol
@@ -135,54 +128,68 @@ func Build(opts BuildOpts) map[string]interface{} {
 	histBySym := make(map[string]*trendDataResult)
 	newsBySym := make(map[string][]map[string]interface{})
 
+	// Concurrent hist + news fetching. A semaphore caps the number of
+	// in-flight Yahoo/FMP calls to avoid hammering upstream APIs.
+	// Each goroutine fetches both historical data and news for one ticker.
+	var mu sync.Mutex
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+
 	for i := 0; i < trendNewsLimit; i++ {
-		sym := companies[i].Symbol
-		var hist []map[string]interface{}
-		if useYahooForQuotes {
-			hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
-		} else {
-			hist = fmpClient.GetHistoricalRange(sym, qStartStr, qEndStr)
-			if len(hist) == 0 {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			sym := companies[idx].Symbol
+
+			var hist []map[string]interface{}
+			if useYahooForQuotes {
 				hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
+			} else {
+				hist = fmpClient.GetHistoricalRange(sym, qStartStr, qEndStr)
+				if len(hist) == 0 {
+					hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
+				}
 			}
-		}
-		if td := quarterTrendData(hist); td != nil {
-			histBySym[sym] = td
-		}
-		if i < 3 {
-			log.Printf("dashboard Build: hist ticker[%d]=%s hist_records=%d trend=%v", i, sym, len(hist), histBySym[sym] != nil)
-		}
-		time.Sleep(80 * time.Millisecond)
-	}
-	log.Printf("dashboard Build: trends_computed=%d", len(histBySym))
-	for i := 0; i < trendNewsLimit; i++ {
-		sym := companies[i].Symbol
-		var news []map[string]interface{}
-		if useYahooForQuotes {
-			news = yahooClient.GetNews(sym, 2)
-		} else {
-			news = fmpClient.GetNews(sym, 2)
-			if len(news) == 0 {
+			td := quarterTrendData(hist)
+
+			var news []map[string]interface{}
+			if useYahooForQuotes {
 				news = yahooClient.GetNews(sym, 2)
+			} else {
+				news = fmpClient.GetNews(sym, 2)
+				if len(news) == 0 {
+					news = yahooClient.GetNews(sym, 2)
+				}
 			}
-		}
-		formatted := make([]map[string]interface{}, 0)
-		for j, n := range news {
-			if j >= 2 {
-				break
+			formatted := make([]map[string]interface{}, 0)
+			for j, n := range news {
+				if j >= 2 {
+					break
+				}
+				title := getStr(n, "title", "url")
+				if len(title) > 80 {
+					title = title[:80]
+				}
+				formatted = append(formatted, map[string]interface{}{
+					"title": title,
+					"url":   getStr(n, "url", "link"),
+				})
 			}
-			title := getStr(n, "title", "url")
-			if len(title) > 80 {
-				title = title[:80]
+
+			mu.Lock()
+			if td != nil {
+				histBySym[sym] = td
 			}
-			formatted = append(formatted, map[string]interface{}{
-				"title": title,
-				"url":   getStr(n, "url", "link"),
-			})
-		}
-		newsBySym[sym] = formatted
-		time.Sleep(80 * time.Millisecond)
+			newsBySym[sym] = formatted
+			mu.Unlock()
+		}(i)
 	}
+	wg.Wait()
+
+	log.Printf("dashboard Build: trends_computed=%d news_computed=%d", len(histBySym), len(newsBySym))
 
 	bySector := make(map[string][]map[string]interface{})
 	for _, c := range companies {
@@ -225,15 +232,15 @@ func Build(opts BuildOpts) map[string]interface{} {
 			qCloses = td.Closes
 		}
 		bySector[sector] = append(bySector[sector], map[string]interface{}{
-			"symbol":          sym,
-			"name":            c.Name,
-			"price":           pricePtr,
-			"change_pct":      chgPtr,
-			"quarter_trend":   qTrend,
-			"quarter_closes":  qCloses,
-			"news":            newsBySym[sym],
-			"top_insiders":    topInsiders[sym],
-			"sources":         map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
+			"symbol":         sym,
+			"name":           c.Name,
+			"price":          pricePtr,
+			"change_pct":     chgPtr,
+			"quarter_trend":  qTrend,
+			"quarter_closes": qCloses,
+			"news":           newsBySym[sym],
+			"top_insiders":   topInsiders[sym],
+			"sources":        map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
 		})
 	}
 
@@ -251,10 +258,10 @@ func Build(opts BuildOpts) map[string]interface{} {
 	}
 
 	out := map[string]interface{}{
-		"as_of":              asOf.Format("2006-01-02"),
-		"total_companies":    len(companies),
-		"sectors":            sectors,
-		"available_sectors":  availableSectors,
+		"as_of":             asOf.Format("2006-01-02"),
+		"total_companies":   len(companies),
+		"sectors":           sectors,
+		"available_sectors": availableSectors,
 	}
 	if len(providerStatus) > 0 {
 		out["provider_status"] = providerStatus
@@ -333,10 +340,10 @@ func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]map[st
 			val = r.ValueUSD
 		}
 		byTicker[t] = append(byTicker[t], map[string]interface{}{
-			"name":  ins,
-			"role":  r.Role,
+			"name":   ins,
+			"role":   r.Role,
 			"shares": r.SharesSold,
-			"value": val,
+			"value":  val,
 		})
 	}
 	out := make(map[string][]map[string]interface{})

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bighogz/Cursor-Vibes/internal/aggregator"
@@ -25,8 +26,28 @@ var (
 	commit  = "unknown"
 )
 
+// dashStore holds the latest full dashboard result (map[string]interface{}).
+// Reads are lock-free; writes happen only in the background refresh goroutine.
+var dashStore atomic.Value
+
+var refreshMu sync.Mutex
+var lastRefreshAt time.Time
+
+const refreshDebounce = 5 * time.Minute
+const refreshInterval = 30 * time.Minute
+
 func main() {
 	config.Load()
+
+	// Cold start: load disk cache into memory so the first request is instant
+	// while the background goroutine builds a fresh copy.
+	if cached, ok := cache.Read(true); ok {
+		dashStore.Store(cached)
+		log.Println("cold start: loaded dashboard from disk cache")
+	}
+
+	go backgroundRefreshLoop()
+
 	http.HandleFunc("/api/dashboard", securityHeaders(handleDashboard))
 	http.HandleFunc("/api/dashboard/refresh", securityHeaders(adminOrRateLimit(handleRefresh)))
 	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
@@ -34,14 +55,9 @@ func main() {
 	http.HandleFunc("/api/health", securityHeaders(handleHealth))
 	http.HandleFunc("/api/health/providers", securityHeaders(handleProviders))
 
-	// Static assets from React build (JS/CSS/images)
 	http.HandleFunc("/assets/", securityHeaders(serveSPAAssets))
-	// Legacy static files
 	http.HandleFunc("/static/", securityHeaders(serveStatic))
-	// SPA catch-all: serves React index.html for all non-API routes
 	http.HandleFunc("/", securityHeaders(serveSPA))
-
-	go startupRefresh()
 
 	port := "8000"
 	if p := os.Getenv("PORT"); p != "" {
@@ -58,76 +74,37 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-// hasSPABuild returns true when the React frontend has been built.
-func hasSPABuild() bool {
-	_, err := os.Stat("frontend/dist/index.html")
-	return err == nil
+// backgroundRefreshLoop builds the full dashboard on startup, then re-builds
+// every refreshInterval. The result is stored in dashStore (atomic, lock-free reads).
+func backgroundRefreshLoop() {
+	doRefresh()
+	ticker := time.NewTicker(refreshInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		doRefresh()
+	}
 }
 
-func serveSPA(w http.ResponseWriter, r *http.Request) {
-	if hasSPABuild() {
-		// For root or any client-side route, serve the SPA shell
-		path := "frontend/dist" + r.URL.Path
-		if r.URL.Path == "/" || !fileExists(path) {
-			http.ServeFile(w, r, "frontend/dist/index.html")
-			return
-		}
-		http.ServeFile(w, r, path)
+func doRefresh() {
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
+	if !lastRefreshAt.IsZero() && time.Since(lastRefreshAt) < refreshDebounce {
 		return
 	}
-	// Fallback to legacy static dashboard
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
+	lastRefreshAt = time.Now()
+	log.Println("background refresh: starting full build")
+	start := time.Now()
+	data := dashboard.Build(dashboard.BuildOpts{AsOf: time.Now()})
+	elapsed := time.Since(start)
+	log.Printf("background refresh: completed in %s", elapsed)
+	if data["error"] == nil {
+		dashStore.Store(data)
+		cache.Write(data)
 	}
-	dashPath := "static/dashboard.html"
-	if _, err := os.Stat(dashPath); err == nil {
-		http.ServeFile(w, r, dashPath)
-		return
-	}
-	indexPath := "static/index.html"
-	if _, err := os.Stat(indexPath); err == nil {
-		http.ServeFile(w, r, indexPath)
-		return
-	}
-	jsonResponse(w, map[string]string{"message": "Frontend not found. Run: cd frontend && npm run build"})
 }
 
-func serveSPAAssets(w http.ResponseWriter, r *http.Request) {
-	subpath := strings.TrimPrefix(r.URL.Path, "/assets/")
-	if subpath == "" || strings.Contains(subpath, "..") {
-		http.NotFound(w, r)
-		return
-	}
-	path := safeStaticPath("frontend/dist/assets", subpath)
-	if path == "" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	http.ServeFile(w, r, path)
-}
-
-func serveStatic(w http.ResponseWriter, r *http.Request) {
-	subpath := strings.TrimPrefix(r.URL.Path, "/static/")
-	subpath = strings.TrimPrefix(subpath, "/")
-	if subpath == "" || strings.Contains(subpath, "..") {
-		http.NotFound(w, r)
-		return
-	}
-	path := safeStaticPath("static", subpath)
-	if path == "" {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, path)
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
+// handleDashboard serves the dashboard from the in-memory store.
+// Sector/limit filtering is a fast in-memory operation (microseconds).
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -150,59 +127,98 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"error": fmt.Sprintf("unknown sector: %q", sector)})
 		return
 	}
-	if sector != "" || limit > 0 {
-		if limit <= 0 {
-			limit = 50
+
+	stored := dashStore.Load()
+	if stored == nil {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		jsonResponse(w, map[string]interface{}{
+			"error":   "Dashboard is building. Try again in ~30 seconds.",
+			"sectors": []interface{}{},
+		})
+		return
+	}
+
+	full, _ := stored.(map[string]interface{})
+	filtered := filterDashboard(full, sector, limit)
+	w.Header().Set("X-Served-From", "memory")
+	jsonResponse(w, filtered)
+}
+
+// filterDashboard returns a view of the full dashboard filtered by sector and/or limit.
+// Handles both fresh Build() output ([]map[string]interface{}) and JSON-deserialized
+// cache data ([]interface{}).
+func filterDashboard(full map[string]interface{}, sector string, limit int) map[string]interface{} {
+	if sector == "" && limit <= 0 {
+		return full
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range full {
+		result[k] = v
+	}
+
+	var sectorList []map[string]interface{}
+	switch s := full["sectors"].(type) {
+	case []map[string]interface{}:
+		sectorList = s
+	case []interface{}:
+		for _, item := range s {
+			if m, ok := item.(map[string]interface{}); ok {
+				sectorList = append(sectorList, m)
+			}
 		}
-		opts := dashboard.BuildOpts{Sector: sector, Limit: limit, AsOf: time.Now()}
-		data := dashboard.Build(opts)
-		w.Header().Set("X-Served-From", "on-demand")
-		jsonResponse(w, data)
-		return
 	}
-	cached, ok := cache.Read(true)
-	if ok {
-		w.Header().Set("X-Served-From", "cache")
-		jsonResponse(w, cached)
-		return
-	}
-	_, okFresh := cache.Read(false)
-	if !okFresh {
-		go refreshCache()
-	}
-	jsonResponse(w, map[string]interface{}{
-		"error":   "Data is being prepared. Check back in a few minutes.",
-		"sectors": []interface{}{},
-	})
-}
 
-var refreshMu sync.Mutex
-var lastRefreshAt time.Time
+	var filtered []interface{}
+	total := 0
 
-const refreshDebounce = 5 * time.Minute
+	for _, sec := range sectorList {
+		name, _ := sec["name"].(string)
+		if sector != "" && !strings.EqualFold(name, sector) {
+			continue
+		}
 
-func refreshCache() {
-	refreshMu.Lock()
-	defer refreshMu.Unlock()
-	if !lastRefreshAt.IsZero() && time.Since(lastRefreshAt) < refreshDebounce {
-		return
-	}
-	lastRefreshAt = time.Now()
-	data := dashboard.Build(dashboard.BuildOpts{AsOf: time.Now()})
-	if data["error"] == nil {
-		cache.Write(data)
-	}
-}
+		var companies []interface{}
+		switch c := sec["companies"].(type) {
+		case []map[string]interface{}:
+			for _, co := range c {
+				companies = append(companies, co)
+			}
+		case []interface{}:
+			companies = c
+		}
 
-func startupRefresh() {
-	_, ok := cache.Read(false)
-	if !ok {
-		refreshCache()
+		if limit > 0 {
+			remaining := limit - total
+			if remaining <= 0 {
+				break
+			}
+			if len(companies) > remaining {
+				companies = companies[:remaining]
+			}
+		}
+
+		out := make(map[string]interface{})
+		for k, v := range sec {
+			out[k] = v
+		}
+		out["companies"] = companies
+		filtered = append(filtered, out)
+		total += len(companies)
+
+		if limit > 0 && total >= limit {
+			break
+		}
 	}
+
+	result["sectors"] = filtered
+	result["total_companies"] = total
+	return result
 }
 
 func handleRefresh(w http.ResponseWriter, r *http.Request) {
-	go refreshCache()
+	go doRefresh()
 	jsonResponse(w, map[string]string{"status": "refresh started"})
 }
 
@@ -306,12 +322,12 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"tickers_count":  len(tickers),
-		"records_count":  len(records),
+		"tickers_count":   len(tickers),
+		"records_count":   len(records),
 		"anomalies_count": len(anomaliesList),
-		"date_from":      dateFrom.Format("2006-01-02"),
-		"date_to":        dateTo.Format("2006-01-02"),
-		"as_of":          asOf.Format("2006-01-02"),
+		"date_from":       dateFrom.Format("2006-01-02"),
+		"date_to":         dateTo.Format("2006-01-02"),
+		"as_of":           asOf.Format("2006-01-02"),
 		"params": map[string]interface{}{
 			"baseline_days": baselineDays,
 			"current_days":  currentDays,
@@ -320,6 +336,74 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		"anomalies":  anomaliesList,
 		"all_signals": signalsList,
 	})
+}
+
+// hasSPABuild returns true when the React frontend has been built.
+func hasSPABuild() bool {
+	_, err := os.Stat("frontend/dist/index.html")
+	return err == nil
+}
+
+func serveSPA(w http.ResponseWriter, r *http.Request) {
+	if hasSPABuild() {
+		path := "frontend/dist" + r.URL.Path
+		if r.URL.Path == "/" || !fileExists(path) {
+			http.ServeFile(w, r, "frontend/dist/index.html")
+			return
+		}
+		http.ServeFile(w, r, path)
+		return
+	}
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	dashPath := "static/dashboard.html"
+	if _, err := os.Stat(dashPath); err == nil {
+		http.ServeFile(w, r, dashPath)
+		return
+	}
+	indexPath := "static/index.html"
+	if _, err := os.Stat(indexPath); err == nil {
+		http.ServeFile(w, r, indexPath)
+		return
+	}
+	jsonResponse(w, map[string]string{"message": "Frontend not found. Run: cd frontend && npm run build"})
+}
+
+func serveSPAAssets(w http.ResponseWriter, r *http.Request) {
+	subpath := strings.TrimPrefix(r.URL.Path, "/assets/")
+	if subpath == "" || strings.Contains(subpath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	path := safeStaticPath("frontend/dist/assets", subpath)
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, path)
+}
+
+func serveStatic(w http.ResponseWriter, r *http.Request) {
+	subpath := strings.TrimPrefix(r.URL.Path, "/static/")
+	subpath = strings.TrimPrefix(subpath, "/")
+	if subpath == "" || strings.Contains(subpath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	path := safeStaticPath("static", subpath)
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, path)
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

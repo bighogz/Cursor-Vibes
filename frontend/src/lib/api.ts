@@ -2,15 +2,8 @@ import type { DashboardData, ScanResult } from "../types/dashboard";
 
 const BASE = "";
 
-export async function fetchDashboard(
-  sector?: string,
-  limit?: number
-): Promise<DashboardData> {
-  const params = new URLSearchParams();
-  if (sector) params.set("sector", sector);
-  params.set("limit", String(limit ?? 50));
-  const qs = params.toString();
-  const res = await fetch(`${BASE}/api/dashboard${qs ? "?" + qs : ""}`);
+export async function fetchDashboard(): Promise<DashboardData> {
+  const res = await fetch(`${BASE}/api/dashboard`);
   if (!res.ok) throw new Error(`Dashboard fetch failed: ${res.status}`);
   return res.json();
 }
