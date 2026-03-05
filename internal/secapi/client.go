@@ -45,10 +45,11 @@ func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo 
 		return nil
 	}
 
-	// Query up to 5 batches (150 tickers) with 50 filings each
-	maxBatches := 5
+	// Query up to 17 batches (~500 tickers) with 50 filings each.
+	// SEC-API.io rate limit is generous; SEC EDGAR XML fetches are the bottleneck.
+	maxBatches := 17
 	batchSize := 30
-	maxXMLFetchTotal := 50
+	maxXMLFetchTotal := 75
 	var allFilings []form4Filing
 
 	for b := 0; b < maxBatches && b*batchSize < len(allTickers); b++ {

@@ -66,17 +66,11 @@ func Build(opts BuildOpts) map[string]interface{} {
 	dateFrom := asOf.AddDate(0, 0, -totalDays)
 	dateTo := asOf
 
-	// Trend/news sample size. Since Build() runs in the background (not on the
-	// request path), we can afford a larger sample. Sector-filtered builds fetch
-	// all companies in the sector.
+	// Trend/news fetches go through Yahoo (free) and are rate-limited by the
+	// semaphore, not by FMP API budget. For the background full build we fetch
+	// all companies so every sector has data. Build time ~2-3 min is fine for
+	// the 30-min refresh cycle.
 	trendNewsLimit := len(companies)
-	if opts.Sector == "" && opts.Limit <= 0 {
-		sample := 50
-		if !config.FMPFreeTier {
-			sample = min(200, len(companies))
-		}
-		trendNewsLimit = min(sample, len(companies))
-	}
 	quoteBySym := make(map[string]map[string]interface{})
 	yahooClient := yahoo.New()
 	fmpClient := fmp.New()
