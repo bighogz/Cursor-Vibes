@@ -115,7 +115,7 @@ func Build(opts BuildOpts) map[string]interface{} {
 		allTickers[i] = c.Symbol
 	}
 	var insiderRecords []models.InsiderSellRecord
-	if config.FMPAPIKey != "" {
+	if config.FMPAPIKey != "" || config.EODHDAPIKey != "" || config.SECAPIKey != "" {
 		insiderRecords = aggregator.AggregateInsiderSells(allTickers, dateFrom, dateTo)
 		log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
 	}
@@ -222,8 +222,21 @@ func Build(opts BuildOpts) map[string]interface{} {
 			newsSrc = priceSrc
 		}
 		insiderSrc := "none"
-		if len(topInsiders[sym]) > 0 {
-			insiderSrc = "fmp"
+		if insiders := topInsiders[sym]; len(insiders) > 0 {
+			sources := make(map[string]bool)
+			for _, ins := range insiders {
+				if s, ok := ins["source"].(string); ok && s != "" {
+					sources[s] = true
+				}
+			}
+			switch {
+			case sources["fmp"] && sources["eodhd"]:
+				insiderSrc = "fmp+eodhd"
+			case sources["eodhd"]:
+				insiderSrc = "eodhd"
+			default:
+				insiderSrc = "fmp"
+			}
 		}
 		var qTrend *float64
 		var qCloses []float64
@@ -344,6 +357,7 @@ func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]map[st
 			"role":   r.Role,
 			"shares": r.SharesSold,
 			"value":  val,
+			"source": r.Source,
 		})
 	}
 	out := make(map[string][]map[string]interface{})

@@ -69,7 +69,9 @@ make build                   # Go API + Rust binary + React frontend
 │  Go API  (cmd/api) — port 8000                       │
 │  ├─ Dashboard builder → prices, trends, news         │
 │  │  ├─ go-yfinance    → Yahoo Finance (native Go)    │
-│  │  ├─ FMP client     → insider sells, S&P 500 list  │
+│  │  ├─ FMP client     → S&P 500 list, insider latest  │
+│  │  ├─ SEC-API client → Form 4 insider sells (EDGAR) │
+│  │  ├─ EODHD client   → insider transactions (paid)  │
 │  │  └─ HTTP fallback  → Yahoo v7/v8 (news)           │
 │  ├─ Rust binary       → anomaly + trend compute      │
 │  │  └─ Go fallback    → aggregator + trend pkg       │
@@ -128,12 +130,13 @@ cd frontend && npm run dev    # http://localhost:5173
 | Provider | Data | Key Required |
 |---|---|---|
 | **Yahoo Finance** | Stock prices, historical closes, news | No (handled by go-yfinance) |
-| **FMP** | S&P 500 list, insider sells, quotes (fallback) | Yes — `FMP_API_KEY` |
-| **SEC-API.io** | Form 3/4/5 insider transactions | Optional — `SEC_API_KEY` |
+| **FMP** | S&P 500 list, insider sells (latest feed), quotes (fallback) | Yes — `FMP_API_KEY` |
+| **SEC-API.io** | Form 4 insider sells parsed from SEC EDGAR XML | Recommended — `SEC_API_KEY` |
 | **Financial Datasets** | Form 4 insider trades | Optional — `FINANCIAL_DATASETS_API_KEY` |
-| **EODHD** | Insider transactions | Optional — `EODHD_API_KEY` |
+| **EODHD** | Insider transactions (requires All-In-One plan) | Optional — `EODHD_API_KEY` |
 
-At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list and insider data.
+At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list.
+`SEC_API_KEY` is recommended for reliable insider sell data — it queries SEC EDGAR Form 4 filings directly and parses the XML for sale transactions across S&P 500 companies.
 Yahoo Finance handles prices, trends, and news with no API key.
 
 ---
@@ -235,7 +238,7 @@ The dashboard shows all S&P 500 companies grouped by GICS sector:
 - **Change** — Daily percentage change (green/red badge)
 - **Quarterly Trend** — 13-week return with inline SVG sparkline
 - **News** — Recent headlines from Yahoo search
-- **Top Insider Sellers** — Name + shares sold from FMP insider data
+- **Top Insider Sellers** — Name + shares sold from SEC Form 4 filings (primary), FMP, and EODHD
 
 Click any row to open the detail drawer with expanded sparkline, full news list,
 and insider table. Selection is preserved in the URL (`?stock=AAPL`).
@@ -327,9 +330,11 @@ internal/
   cache/                 File-based JSON cache
   config/                Environment loading (sync.Once)
   dashboard/             Dashboard builder
+  eodhd/                 EODHD insider transactions client
   fmp/                   FMP API client
   httpclient/            Shared HTTP client with timeouts
   models/                InsiderSellRecord struct
+  secapi/                SEC-API.io Form 4 query + EDGAR XML parser
   rustclient/            Go ↔ Rust subprocess bridge
   sp500/                 S&P 500 company data
   trend/                 Quarterly trend math (Go fallback)

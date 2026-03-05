@@ -2,14 +2,20 @@ package aggregator
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	"encoding/json"
+	"os"
+
 	"github.com/bighogz/Cursor-Vibes/internal/config"
+	"github.com/bighogz/Cursor-Vibes/internal/eodhd"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
+	"github.com/bighogz/Cursor-Vibes/internal/secapi"
 )
 
 type dailyVolume struct {
@@ -22,11 +28,28 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 	seen := make(map[string]bool)
 	all := make([]models.InsiderSellRecord, 0)
 
-	if config.FMPAPIKey != "" {
-		tickerSet := make(map[string]bool, len(tickers))
-		for _, t := range tickers {
-			tickerSet[strings.ToUpper(t)] = true
+	tickerSet := make(map[string]bool, len(tickers))
+	for _, t := range tickers {
+		tickerSet[strings.ToUpper(t)] = true
+	}
+
+	// Seed from unified cache (accumulated across multiple builds and sources)
+	cached := loadUnifiedCache()
+	for _, r := range cached {
+		t := strings.ToUpper(r.Ticker)
+		if tickerSet[t] && !r.TransactionDate.Before(dateFrom) && !r.TransactionDate.After(dateTo) {
+			key := keyFor(r)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, r)
+			}
 		}
+	}
+	if len(cached) > 0 {
+		log.Printf("aggregator: loaded %d records from unified cache, %d matched filters", len(cached), len(all))
+	}
+
+	if config.FMPAPIKey != "" {
 		client := fmp.New()
 		recs := client.GetInsiderSells(tickerSet, dateFrom, dateTo)
 		for _, r := range recs {
@@ -36,9 +59,70 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 				all = append(all, r)
 			}
 		}
+		log.Printf("aggregator: fmp contributed %d insider records", len(all))
 	}
 
+	if config.EODHDAPIKey != "" {
+		eClient := eodhd.New()
+		recs := eClient.GetInsiderSells(tickerSet, dateFrom, dateTo)
+		added := 0
+		for _, r := range recs {
+			key := keyFor(r)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, r)
+				added++
+			}
+		}
+		log.Printf("aggregator: eodhd contributed %d new insider records (%d total from eodhd)", added, len(recs))
+	}
+
+	if config.SECAPIKey != "" {
+		sClient := secapi.New()
+		recs := sClient.GetInsiderSells(tickerSet, dateFrom, dateTo)
+		added := 0
+		for _, r := range recs {
+			key := keyFor(r)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, r)
+				added++
+			}
+		}
+		log.Printf("aggregator: sec-api contributed %d new insider records (%d total from sec)", added, len(recs))
+	}
+
+	// Persist all aggregated records to the unified insider cache. This means
+	// SEC-API and EODHD records accumulate alongside FMP records across restarts.
+	if len(all) > 0 {
+		saveUnifiedCache(all)
+	}
+
+	log.Printf("aggregator: total deduplicated insider records=%d", len(all))
 	return all
+}
+
+const unifiedCachePath = "data/insider_unified_cache.json"
+
+func loadUnifiedCache() []models.InsiderSellRecord {
+	f, err := os.Open(unifiedCachePath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var records []models.InsiderSellRecord
+	json.NewDecoder(f).Decode(&records)
+	return records
+}
+
+func saveUnifiedCache(records []models.InsiderSellRecord) {
+	os.MkdirAll("data", 0700)
+	f, err := os.OpenFile(unifiedCachePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(records)
 }
 
 func keyFor(r models.InsiderSellRecord) string {

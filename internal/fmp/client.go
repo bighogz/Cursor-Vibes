@@ -128,12 +128,40 @@ func (c *Client) GetSP500Tickers() []string {
 // (1 page on free tier), merges with a local cache file to accumulate data
 // over multiple runs, and returns all records matching the ticker filter.
 func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
-	freshRecords := c.fetchLatestInsiderPage(tickerFilter, dateFrom, dateTo)
+	freshRecords := c.fetchLatestInsiderPages(tickerFilter, dateFrom, dateTo)
 	cached := loadInsiderCache()
 	merged := mergeInsiderRecords(cached, freshRecords)
 	if len(freshRecords) > 0 {
 		saveInsiderCache(merged)
 	}
+
+	// Identify S&P 500 tickers missing from cache and try per-ticker fetch
+	// to gradually enrich the cache with targeted data. Caps at 15 tickers
+	// per cycle to conserve API budget.
+	if tickerFilter != nil {
+		cachedTickers := make(map[string]bool)
+		for _, r := range merged {
+			cachedTickers[strings.ToUpper(r.Ticker)] = true
+		}
+		var missing []string
+		for t := range tickerFilter {
+			if !cachedTickers[t] {
+				missing = append(missing, t)
+			}
+		}
+		if len(missing) > 15 {
+			missing = missing[:15]
+		}
+		if len(missing) > 0 {
+			perTicker := c.fetchPerTickerInsiders(missing, dateFrom, dateTo)
+			if len(perTicker) > 0 {
+				merged = mergeInsiderRecords(merged, perTicker)
+				saveInsiderCache(merged)
+				log.Printf("fmp per-ticker enrichment: fetched %d records for %d tickers", len(perTicker), len(missing))
+			}
+		}
+	}
+
 	// Filter merged set by ticker and date
 	var out []models.InsiderSellRecord
 	for _, r := range merged {
@@ -153,16 +181,72 @@ func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo 
 	return out
 }
 
-func (c *Client) fetchLatestInsiderPage(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
-	params := url.Values{}
-	params.Set("page", "0")
-	params.Set("limit", "100")
-	params.Set("transactionType", "S-Sale")
-	data, err := c.get("/insider-trading/latest", params)
-	if err != nil || data == nil {
-		return nil
+// fetchPerTickerInsiders tries the FMP per-ticker insider-trading endpoint
+// for specific tickers. Uses the v3 API path which may be available on free
+// tier. Self-disables if the first ticker returns a "Restricted Endpoint" error.
+func (c *Client) fetchPerTickerInsiders(tickers []string, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
+	var all []models.InsiderSellRecord
+	for i, ticker := range tickers {
+		params := url.Values{}
+		params.Set("symbol", ticker)
+		params.Set("apikey", c.APIKey)
+		u := "https://financialmodelingprep.com/api/v3/insider-trading?" + params.Encode()
+		resp, err := httpclient.Default.Get(u)
+		if err != nil {
+			log.Printf("fmp per-ticker %s: request error: %v", ticker, err)
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == 429 {
+			log.Printf("fmp per-ticker: rate limited at ticker %d/%d", i+1, len(tickers))
+			break
+		}
+		var data interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			continue
+		}
+		if m, ok := data.(map[string]interface{}); ok {
+			if msg, _ := m["Error Message"].(string); strings.Contains(strings.ToLower(msg), "restricted") ||
+				strings.Contains(strings.ToLower(msg), "upgrade") {
+				log.Printf("fmp per-ticker: endpoint restricted, disabling per-ticker fetch")
+				break
+			}
+		}
+		recs := parseInsiderRecords(data, nil, dateFrom, dateTo)
+		all = append(all, recs...)
 	}
-	return parseInsiderRecords(data, nil, dateFrom, dateTo)
+	return all
+}
+
+func (c *Client) fetchLatestInsiderPages(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
+	pages := 5
+	if config.FMPFreeTier {
+		pages = 3
+	}
+	var all []models.InsiderSellRecord
+	for p := 0; p < pages; p++ {
+		params := url.Values{}
+		params.Set("page", strconv.Itoa(p))
+		params.Set("limit", "100")
+		params.Set("transactionType", "S-Sale")
+		data, err := c.get("/insider-trading/latest", params)
+		if err != nil || data == nil {
+			break
+		}
+		if m, ok := data.(map[string]interface{}); ok {
+			if _, hasErr := m["_error"]; hasErr {
+				log.Printf("fmp insider page %d: rate limited or error", p)
+				break
+			}
+		}
+		recs := parseInsiderRecords(data, nil, dateFrom, dateTo)
+		if len(recs) == 0 {
+			break
+		}
+		all = append(all, recs...)
+	}
+	log.Printf("fmp fetchLatestInsiderPages: %d records across %d pages", len(all), pages)
+	return all
 }
 
 const insiderCachePath = "data/insider_cache.json"
