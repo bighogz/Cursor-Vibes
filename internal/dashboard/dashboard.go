@@ -25,10 +25,13 @@ type BuildOpts struct {
 	AsOf   time.Time
 }
 
-func Build(opts BuildOpts) map[string]interface{} {
+// Result is exported so callers (main.go, tests) can use the typed return.
+type Result = models.DashboardResult
+
+func Build(opts BuildOpts) *Result {
 	allCompanies := sp500.Load()
 	if len(allCompanies) == 0 {
-		return map[string]interface{}{"error": "Could not load S&P 500", "sectors": []interface{}{}}
+		return &Result{Error: "Could not load S&P 500"}
 	}
 	seen := make(map[string]bool)
 	availableSectors := make([]string, 0)
@@ -185,7 +188,7 @@ func Build(opts BuildOpts) map[string]interface{} {
 
 	log.Printf("dashboard Build: trends_computed=%d news_computed=%d", len(histBySym), len(newsBySym))
 
-	bySector := make(map[string][]map[string]interface{})
+	bySector := make(map[string][]models.Company)
 	for _, c := range companies {
 		sym := c.Symbol
 		q := quoteBySym[sym]
@@ -217,16 +220,16 @@ func Build(opts BuildOpts) map[string]interface{} {
 		}
 		insiderSrc := "none"
 		if insiders := topInsiders[sym]; len(insiders) > 0 {
-			sources := make(map[string]bool)
+			srcSet := make(map[string]bool)
 			for _, ins := range insiders {
-				if s, ok := ins["source"].(string); ok && s != "" {
-					sources[s] = true
-				}
+				srcSet[ins.Source] = true
 			}
 			switch {
-			case sources["fmp"] && sources["eodhd"]:
+			case srcSet["fmp"] && srcSet["eodhd"]:
 				insiderSrc = "fmp+eodhd"
-			case sources["eodhd"]:
+			case srcSet["sec"]:
+				insiderSrc = "sec"
+			case srcSet["eodhd"]:
 				insiderSrc = "eodhd"
 			default:
 				insiderSrc = "fmp"
@@ -238,42 +241,48 @@ func Build(opts BuildOpts) map[string]interface{} {
 			qTrend = &td.Pct
 			qCloses = td.Closes
 		}
-		bySector[sector] = append(bySector[sector], map[string]interface{}{
-			"symbol":         sym,
-			"name":           c.Name,
-			"price":          pricePtr,
-			"change_pct":     chgPtr,
-			"quarter_trend":  qTrend,
-			"quarter_closes": qCloses,
-			"news":           newsBySym[sym],
-			"top_insiders":   topInsiders[sym],
-			"sources":        map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
+
+		newsItems := make([]models.NewsItem, 0, len(newsBySym[sym]))
+		for _, n := range newsBySym[sym] {
+			newsItems = append(newsItems, models.NewsItem{
+				Title: getStr(n, "title"),
+				URL:   getStr(n, "url"),
+			})
+		}
+
+		bySector[sector] = append(bySector[sector], models.Company{
+			Symbol:        sym,
+			Name:          c.Name,
+			Price:         pricePtr,
+			ChangePct:     chgPtr,
+			QuarterTrend:  qTrend,
+			QuarterCloses: qCloses,
+			News:          newsItems,
+			TopInsiders:   topInsiders[sym],
+			Sources:       map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
 		})
 	}
 
-	sectors := make([]map[string]interface{}, 0)
+	sectors := make([]models.SectorGroup, 0, len(bySector))
 	sectorNames := make([]string, 0, len(bySector))
 	for k := range bySector {
 		sectorNames = append(sectorNames, k)
 	}
 	sort.Strings(sectorNames)
 	for _, name := range sectorNames {
-		sectors = append(sectors, map[string]interface{}{
-			"name":      name,
-			"companies": bySector[name],
+		sectors = append(sectors, models.SectorGroup{
+			Name:      name,
+			Companies: bySector[name],
 		})
 	}
 
-	out := map[string]interface{}{
-		"as_of":             asOf.Format("2006-01-02"),
-		"total_companies":   len(companies),
-		"sectors":           sectors,
-		"available_sectors": availableSectors,
+	return &Result{
+		AsOf:             asOf.Format("2006-01-02"),
+		TotalCompanies:   len(companies),
+		Sectors:          sectors,
+		AvailableSectors: availableSectors,
+		ProviderStatus:   providerStatus,
 	}
-	if len(providerStatus) > 0 {
-		out["provider_status"] = providerStatus
-	}
-	return out
 }
 
 type trendDataResult struct {
@@ -334,30 +343,26 @@ func sampleWeekly(closes []float64) []float64 {
 	return weekly
 }
 
-func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]map[string]interface{} {
-	byTicker := make(map[string][]map[string]interface{})
+func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]models.InsiderEntry {
+	byTicker := make(map[string][]models.InsiderEntry)
 	for _, r := range records {
 		t := strings.ToUpper(r.Ticker)
-		ins := "Unknown"
+		name := "Unknown"
 		if r.InsiderName != nil {
-			ins = *r.InsiderName
+			name = *r.InsiderName
 		}
-		var val *float64
-		if r.ValueUSD != nil {
-			val = r.ValueUSD
-		}
-		byTicker[t] = append(byTicker[t], map[string]interface{}{
-			"name":   ins,
-			"role":   r.Role,
-			"shares": r.SharesSold,
-			"value":  val,
-			"source": r.Source,
+		byTicker[t] = append(byTicker[t], models.InsiderEntry{
+			Name:   name,
+			Role:   r.Role,
+			Shares: r.SharesSold,
+			Value:  r.ValueUSD,
+			Source: r.Source,
 		})
 	}
-	out := make(map[string][]map[string]interface{})
+	out := make(map[string][]models.InsiderEntry)
 	for t, lst := range byTicker {
 		sort.Slice(lst, func(i, j int) bool {
-			return getFloat(lst[i], "shares") > getFloat(lst[j], "shares")
+			return lst[i].Shares > lst[j].Shares
 		})
 		if len(lst) > 5 {
 			lst = lst[:5]

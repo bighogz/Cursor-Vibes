@@ -17,6 +17,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/dashboard"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
+	"github.com/bighogz/Cursor-Vibes/internal/models"
 	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
@@ -26,7 +27,7 @@ var (
 	commit  = "unknown"
 )
 
-// dashStore holds the latest full dashboard result (map[string]interface{}).
+// dashStore holds the latest full dashboard result (*dashboard.Result).
 // Reads are lock-free; writes happen only in the background refresh goroutine.
 var dashStore atomic.Value
 
@@ -41,7 +42,7 @@ func main() {
 
 	// Cold start: load disk cache into memory so the first request is instant
 	// while the background goroutine builds a fresh copy.
-	if cached, ok := cache.Read(true); ok {
+	if cached, ok := cache.ReadTyped(true); ok {
 		dashStore.Store(cached)
 		log.Println("cold start: loaded dashboard from disk cache")
 	}
@@ -97,9 +98,9 @@ func doRefresh() {
 	data := dashboard.Build(dashboard.BuildOpts{AsOf: time.Now()})
 	elapsed := time.Since(start)
 	log.Printf("background refresh: completed in %s", elapsed)
-	if data["error"] == nil {
+	if data.Error == "" {
 		dashStore.Store(data)
-		cache.Write(data)
+		cache.WriteTyped(data)
 	}
 }
 
@@ -132,63 +133,37 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if stored == nil {
 		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		jsonResponse(w, map[string]interface{}{
-			"error":   "Dashboard is building. Try again in ~30 seconds.",
-			"sectors": []interface{}{},
+		jsonResponse(w, &dashboard.Result{
+			Error: "Dashboard is building. Try again in ~30 seconds.",
 		})
 		return
 	}
 
-	full, _ := stored.(map[string]interface{})
+	full := stored.(*dashboard.Result)
 	filtered := filterDashboard(full, sector, limit)
 	w.Header().Set("X-Served-From", "memory")
 	jsonResponse(w, filtered)
 }
 
 // filterDashboard returns a view of the full dashboard filtered by sector and/or limit.
-// Handles both fresh Build() output ([]map[string]interface{}) and JSON-deserialized
-// cache data ([]interface{}).
-func filterDashboard(full map[string]interface{}, sector string, limit int) map[string]interface{} {
+// Operates on typed structs — no interface{} type-switching.
+func filterDashboard(full *dashboard.Result, sector string, limit int) *dashboard.Result {
 	if sector == "" && limit <= 0 {
 		return full
 	}
 
-	result := make(map[string]interface{})
-	for k, v := range full {
-		result[k] = v
+	out := &dashboard.Result{
+		AsOf:             full.AsOf,
+		AvailableSectors: full.AvailableSectors,
+		ProviderStatus:   full.ProviderStatus,
 	}
 
-	var sectorList []map[string]interface{}
-	switch s := full["sectors"].(type) {
-	case []map[string]interface{}:
-		sectorList = s
-	case []interface{}:
-		for _, item := range s {
-			if m, ok := item.(map[string]interface{}); ok {
-				sectorList = append(sectorList, m)
-			}
-		}
-	}
-
-	var filtered []interface{}
 	total := 0
-
-	for _, sec := range sectorList {
-		name, _ := sec["name"].(string)
-		if sector != "" && !strings.EqualFold(name, sector) {
+	for _, sec := range full.Sectors {
+		if sector != "" && !strings.EqualFold(sec.Name, sector) {
 			continue
 		}
-
-		var companies []interface{}
-		switch c := sec["companies"].(type) {
-		case []map[string]interface{}:
-			for _, co := range c {
-				companies = append(companies, co)
-			}
-		case []interface{}:
-			companies = c
-		}
-
+		companies := sec.Companies
 		if limit > 0 {
 			remaining := limit - total
 			if remaining <= 0 {
@@ -198,23 +173,17 @@ func filterDashboard(full map[string]interface{}, sector string, limit int) map[
 				companies = companies[:remaining]
 			}
 		}
-
-		out := make(map[string]interface{})
-		for k, v := range sec {
-			out[k] = v
-		}
-		out["companies"] = companies
-		filtered = append(filtered, out)
+		out.Sectors = append(out.Sectors, models.SectorGroup{
+			Name:      sec.Name,
+			Companies: companies,
+		})
 		total += len(companies)
-
 		if limit > 0 && total >= limit {
 			break
 		}
 	}
-
-	result["sectors"] = filtered
-	result["total_companies"] = total
-	return result
+	out.TotalCompanies = total
+	return out
 }
 
 func handleRefresh(w http.ResponseWriter, r *http.Request) {

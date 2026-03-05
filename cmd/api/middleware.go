@@ -4,11 +4,14 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bighogz/Cursor-Vibes/internal/config"
@@ -32,9 +35,18 @@ func securityHeaders(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// requestIDCounter is a monotonic fallback when crypto/rand fails.
+var requestIDCounter uint64
+
 func generateRequestID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: timestamp-based ID. This path only triggers on entropy
+		// exhaustion, which is effectively impossible on modern kernels, but
+		// failing open with a predictable-but-unique ID is safer than panicking.
+		counter := atomic.AddUint64(&requestIDCounter, 1)
+		return fmt.Sprintf("%x-%x", time.Now().UnixNano(), counter)
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -98,16 +110,43 @@ var scanLimiter = newRateLimiter(5 * time.Second) // 1 scan per 5s per IP
 
 func rateLimitScan(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if f := r.Header.Get("X-Forwarded-For"); f != "" {
-			ip = strings.TrimSpace(strings.Split(f, ",")[0])
-		}
-		if !scanLimiter.allow(ip) {
+		if !scanLimiter.allow(clientIP(r)) {
 			http.Error(w, `{"error":"rate limit: try again in a few seconds"}`, http.StatusTooManyRequests)
 			return
 		}
 		next(w, r)
 	}
+}
+
+// clientIP extracts the client's IP address from the request. When behind a
+// reverse proxy, the proxy appends the real client IP to X-Forwarded-For. We
+// trust the *rightmost* entry (added by the closest trusted proxy), not the
+// leftmost (which the client can spoof). Falls back to RemoteAddr with the
+// port stripped.
+//
+// For production behind a known proxy count, you'd take xff[len(xff)-trustedHops]
+// instead. Single-proxy (nginx → app) means trustedHops=1, which is the default.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		// Trust rightmost entry: the one added by our reverse proxy.
+		// In a multi-hop setup, you'd subtract the number of trusted proxies.
+		ip := strings.TrimSpace(parts[len(parts)-1])
+		if parsed := net.ParseIP(ip); parsed != nil {
+			return parsed.String()
+		}
+	}
+	if xri := r.Header.Get("X-Real-Ip"); xri != "" {
+		if parsed := net.ParseIP(strings.TrimSpace(xri)); parsed != nil {
+			return parsed.String()
+		}
+	}
+	// RemoteAddr is "ip:port" — strip the port.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // adminOrRateLimit protects /api/scan and /api/dashboard/refresh when ADMIN_API_KEY is set.
