@@ -65,8 +65,10 @@ func Build(opts BuildOpts) *Result {
 		tickers[i] = c.Symbol
 	}
 
-	totalDays := 365 + 30
-	dateFrom := asOf.AddDate(0, 0, -totalDays)
+	// Insider data uses a 3-year window to capture the most recent disclosure
+	// for every company — many S&P 500 insiders only sell once every 1-2 years.
+	// Trend/news uses a separate 92-day window (qStart below).
+	insiderFrom := asOf.AddDate(-3, 0, 0)
 	dateTo := asOf
 
 	// Trend/news fetches go through Yahoo (free) and are rate-limited by the
@@ -113,7 +115,7 @@ func Build(opts BuildOpts) *Result {
 	}
 	var insiderRecords []models.InsiderSellRecord
 	if config.FMPAPIKey != "" || config.EODHDAPIKey != "" || config.SECAPIKey != "" {
-		insiderRecords = aggregator.AggregateInsiderSells(allTickers, dateFrom, dateTo)
+		insiderRecords = aggregator.AggregateInsiderSells(allTickers, insiderFrom, dateTo)
 		log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
 	}
 	topInsiders := topInsidersByTicker(insiderRecords)

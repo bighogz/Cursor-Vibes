@@ -134,12 +134,14 @@ cd frontend && npm run dev    # http://localhost:5173
 |---|---|---|
 | **Yahoo Finance** | Stock prices, historical closes, news | No (handled by go-yfinance) |
 | **FMP** | S&P 500 list, insider sells (latest feed), quotes (fallback) | Yes — `FMP_API_KEY` |
-| **SEC-API.io** | Form 4 insider sells parsed from SEC EDGAR XML | Recommended — `SEC_API_KEY` |
+| **SEC-API.io** | Form 4 insider sells parsed from SEC EDGAR XML (400 XMLs/build) | Recommended — `SEC_API_KEY` |
+| **SEC EDGAR** | Direct Form 4 backfill for uncovered companies (free) | No — public API |
 | **Financial Datasets** | Form 4 insider trades | Optional — `FINANCIAL_DATASETS_API_KEY` |
 | **EODHD** | Insider transactions (requires All-In-One plan) | Optional — `EODHD_API_KEY` |
 
 At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list.
-`SEC_API_KEY` is recommended for reliable insider sell data — it queries SEC EDGAR Form 4 filings directly and parses the XML for sale transactions across S&P 500 companies.
+`SEC_API_KEY` is recommended for high insider sell coverage — it queries up to 400 Form 4 XMLs per build, prioritizing companies not yet covered.
+SEC EDGAR direct queries (free, no key) backfill companies that SEC-API.io missed. Coverage grows across builds via the unified cache.
 Yahoo Finance handles prices, trends, and news with no API key.
 
 ---
@@ -333,6 +335,7 @@ internal/
   cache/                 File-based JSON cache
   config/                Environment loading (sync.Once)
   dashboard/             Dashboard builder
+  edgar/                 SEC EDGAR direct Form 4 backfill (free, no key)
   eodhd/                 EODHD insider transactions client
   fmp/                   FMP API client
   httpclient/            Shared HTTP client with timeouts

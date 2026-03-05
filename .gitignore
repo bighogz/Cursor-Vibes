@@ -16,3 +16,4 @@ frontend/dist/
 *.tsbuildinfo
 .DS_Store
 /out/
+/api

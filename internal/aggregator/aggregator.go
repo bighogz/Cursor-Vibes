@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/bighogz/Cursor-Vibes/internal/config"
+	"github.com/bighogz/Cursor-Vibes/internal/edgar"
 	"github.com/bighogz/Cursor-Vibes/internal/eodhd"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
@@ -33,11 +34,13 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 		tickerSet[strings.ToUpper(t)] = true
 	}
 
-	// Seed from unified cache (accumulated across multiple builds and sources)
+	// Seed from unified cache. Load ALL records for matching tickers regardless
+	// of date — the user wants the most recent disclosure even if it's years old.
+	// The cache accumulates across builds and sources, so it grows over time.
 	cached := loadUnifiedCache()
 	for _, r := range cached {
 		t := strings.ToUpper(r.Ticker)
-		if tickerSet[t] && !r.TransactionDate.Before(dateFrom) && !r.TransactionDate.After(dateTo) {
+		if tickerSet[t] {
 			key := keyFor(r)
 			if !seen[key] {
 				seen[key] = true
@@ -46,7 +49,13 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 		}
 	}
 	if len(cached) > 0 {
-		log.Printf("aggregator: loaded %d records from unified cache, %d matched filters", len(cached), len(all))
+		log.Printf("aggregator: loaded %d records from unified cache, %d matched tickers", len(cached), len(all))
+	}
+
+	// Track which tickers already have data so SEC-API can prioritize gaps.
+	coveredTickers := make(map[string]bool)
+	for _, r := range all {
+		coveredTickers[strings.ToUpper(r.Ticker)] = true
 	}
 
 	if config.FMPAPIKey != "" {
@@ -57,9 +66,10 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 			if !seen[key] {
 				seen[key] = true
 				all = append(all, r)
+				coveredTickers[strings.ToUpper(r.Ticker)] = true
 			}
 		}
-		log.Printf("aggregator: fmp contributed %d insider records", len(all))
+		log.Printf("aggregator: fmp contributed, total now %d", len(all))
 	}
 
 	if config.EODHDAPIKey != "" {
@@ -71,34 +81,64 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 			if !seen[key] {
 				seen[key] = true
 				all = append(all, r)
+				coveredTickers[strings.ToUpper(r.Ticker)] = true
 				added++
 			}
 		}
-		log.Printf("aggregator: eodhd contributed %d new insider records (%d total from eodhd)", added, len(recs))
+		log.Printf("aggregator: eodhd contributed %d new records", added)
 	}
 
 	if config.SECAPIKey != "" {
 		sClient := secapi.New()
-		recs := sClient.GetInsiderSells(tickerSet, dateFrom, dateTo)
+		recs := sClient.GetInsiderSells(tickerSet, dateFrom, dateTo, coveredTickers)
 		added := 0
 		for _, r := range recs {
 			key := keyFor(r)
 			if !seen[key] {
 				seen[key] = true
 				all = append(all, r)
+				coveredTickers[strings.ToUpper(r.Ticker)] = true
 				added++
 			}
 		}
-		log.Printf("aggregator: sec-api contributed %d new insider records (%d total from sec)", added, len(recs))
+		log.Printf("aggregator: sec-api contributed %d new records", added)
 	}
 
-	// Persist all aggregated records to the unified insider cache. This means
-	// SEC-API and EODHD records accumulate alongside FMP records across restarts.
+	// EDGAR direct backfill: for tickers still missing insider data, query
+	// SEC EDGAR directly (free, no API key). This fills gaps that SEC-API.io
+	// and FMP didn't cover.
+	var missing []string
+	for _, t := range tickers {
+		if !coveredTickers[strings.ToUpper(t)] {
+			missing = append(missing, strings.ToUpper(t))
+		}
+	}
+	if len(missing) > 0 {
+		eClient := edgar.New()
+		maxFetches := min(200, len(missing)*2)
+		recs := eClient.GetInsiderSells(missing, dateFrom, maxFetches)
+		added := 0
+		for _, r := range recs {
+			key := keyFor(r)
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, r)
+				coveredTickers[strings.ToUpper(r.Ticker)] = true
+				added++
+			}
+		}
+		log.Printf("aggregator: edgar backfill contributed %d records for %d missing tickers", added, len(missing))
+	}
+
+	// Persist ALL records to the unified cache (including old ones from previous
+	// builds). This means coverage grows monotonically across restarts.
 	if len(all) > 0 {
 		saveUnifiedCache(all)
 	}
 
-	log.Printf("aggregator: total deduplicated insider records=%d", len(all))
+	covered := len(coveredTickers)
+	total := len(tickerSet)
+	log.Printf("aggregator: %d deduplicated records covering %d/%d tickers", len(all), covered, total)
 	return all
 }
 

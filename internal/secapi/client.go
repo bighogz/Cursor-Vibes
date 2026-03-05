@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,12 +32,14 @@ func New() *Client {
 // tickers in tickerFilter, then fetches and parses each Form 4 XML from
 // SEC EDGAR to extract sale transactions. Queries multiple batches of
 // tickers to maximize coverage while respecting rate limits.
-func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
+// GetInsiderSells queries SEC-API.io for Form 4 filings and parses the XML.
+// coveredTickers is a hint: tickers that already have insider data are deprioritized
+// so the XML parsing budget goes to companies missing data first.
+func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo time.Time, coveredTickers map[string]bool) []models.InsiderSellRecord {
 	if c.APIKey == "" {
 		return nil
 	}
 
-	// Collect all tickers and split into batches of 30 (query string limit)
 	var allTickers []string
 	for t := range tickerFilter {
 		allTickers = append(allTickers, t)
@@ -45,11 +48,10 @@ func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo 
 		return nil
 	}
 
-	// Query up to 17 batches (~500 tickers) with 50 filings each.
-	// SEC-API.io rate limit is generous; SEC EDGAR XML fetches are the bottleneck.
+	// Query all tickers. SEC-API.io queries are cheap; XML fetches are the bottleneck.
 	maxBatches := 17
 	batchSize := 30
-	maxXMLFetchTotal := 75
+	maxXMLFetchTotal := 400
 	var allFilings []form4Filing
 
 	for b := 0; b < maxBatches && b*batchSize < len(allTickers); b++ {
@@ -63,7 +65,19 @@ func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo 
 		return nil
 	}
 
-	// Fetch and parse Form 4 XMLs (respect SEC EDGAR 10 req/sec rate limit)
+	// Priority sort: parse XMLs for companies NOT yet covered first.
+	// This maximizes the number of unique companies we get data for.
+	if len(coveredTickers) > 0 {
+		sort.SliceStable(allFilings, func(i, j int) bool {
+			iCovered := coveredTickers[allFilings[i].Ticker]
+			jCovered := coveredTickers[allFilings[j].Ticker]
+			if iCovered != jCovered {
+				return !iCovered // uncovered first
+			}
+			return false
+		})
+	}
+
 	var all []models.InsiderSellRecord
 	parsed := 0
 	for _, f := range allFilings {
