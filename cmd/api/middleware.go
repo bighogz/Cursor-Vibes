@@ -15,12 +15,24 @@ import (
 	"time"
 
 	"github.com/bighogz/Cursor-Vibes/internal/config"
+	viotel "github.com/bighogz/Cursor-Vibes/internal/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // securityHeaders adds security-related HTTP headers + request ID logging (AU-12).
 func securityHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := viotel.StartSpan(r.Context(), "HTTP "+r.Method+" "+r.URL.Path)
+		defer span.End()
+		r = r.WithContext(ctx)
+
 		reqID := generateRequestID()
+		span.SetAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+			attribute.String("request.id", reqID),
+		)
+
 		w.Header().Set("X-Request-Id", reqID)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -31,7 +43,12 @@ func securityHeaders(next http.HandlerFunc) http.HandlerFunc {
 		start := time.Now()
 		rw := &statusWriter{ResponseWriter: w, status: 200}
 		next(rw, r)
-		log.Printf("[%s] %s %s %d %s", reqID, r.Method, r.URL.Path, rw.status, time.Since(start).Round(time.Millisecond))
+		elapsed := time.Since(start)
+		span.SetAttributes(
+			attribute.Int("http.status_code", rw.status),
+			attribute.Int64("http.duration_ms", elapsed.Milliseconds()),
+		)
+		log.Printf("[%s] %s %s %d %s", reqID, r.Method, r.URL.Path, rw.status, elapsed.Round(time.Millisecond))
 	}
 }
 

@@ -140,6 +140,21 @@ type AnomalySignal struct {
 	BaselineStd        float64 `json:"baseline_std"`
 	ZScore             float64 `json:"z_score"`
 	IsAnomaly          bool    `json:"is_anomaly"`
+	BlackoutAdjusted   bool    `json:"blackout_adjusted,omitempty"`
+}
+
+// earningsBlackoutMonths approximates the months when most S&P 500 companies
+// are in earnings blackout periods (insiders cannot trade). Q4 earnings are
+// reported Jan-Feb, Q1 in Apr-May, Q2 in Jul-Aug, Q3 in Oct-Nov. The ~2 week
+// quiet period before each means sell volume naturally drops in these months,
+// then spikes after. A naive Z-score would flag routine post-earnings selling.
+//
+// This is a heuristic — precise blackout windows vary per company and are
+// governed by each firm's insider trading policy. For a production system,
+// you'd ingest actual 10b5-1 plan data or company-specific blackout calendars.
+var earningsBlackoutMonths = map[time.Month]bool{
+	time.January: true, time.April: true,
+	time.July: true, time.October: true,
 }
 
 func ComputeAnomalySignals(records []models.InsiderSellRecord, baselineDays, currentDays int, stdThreshold float64, asOf time.Time) []AnomalySignal {
@@ -189,10 +204,22 @@ func ComputeAnomalySignals(records []models.InsiderSellRecord, baselineDays, cur
 		}
 		currentAvgDaily := currentTotal / numDays
 		z := (currentAvgDaily - meanB) / stdB
+
+		// Blackout period adjustment: if the current window falls right after
+		// an earnings blackout month, insiders cluster their (routine) sells
+		// in the open window. Dampen the z-score to avoid false positives on
+		// expected post-blackout activity.
+		adjusted := false
+		if isPostBlackout(currentStart) {
+			z *= 0.6 // 40% dampening for expected post-blackout clustering
+			adjusted = true
+		}
+
 		sig.BaselineMean = meanB
 		sig.BaselineStd = stdB
 		sig.ZScore = z
 		sig.IsAnomaly = z >= stdThreshold && currentTotal > 0
+		sig.BlackoutAdjusted = adjusted
 		results = append(results, sig)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].ZScore > results[j].ZScore })
@@ -209,6 +236,18 @@ func dailyVolumeByTicker(records []models.InsiderSellRecord) []dailyVolume {
 		})
 	}
 	return out
+}
+
+// isPostBlackout returns true if the given date falls in the month immediately
+// following a typical earnings blackout month.
+func isPostBlackout(t time.Time) bool {
+	// Post-blackout months: Feb (after Jan blackout), May (after Apr),
+	// Aug (after Jul), Nov (after Oct).
+	prev := t.Month() - 1
+	if prev < 1 {
+		prev = 12
+	}
+	return earningsBlackoutMonths[prev]
 }
 
 func meanStd(vals []float64) (mean, std float64) {

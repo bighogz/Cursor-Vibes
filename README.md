@@ -22,9 +22,9 @@ A few principles that shaped every decision:
 - **Evidence over claims.** Every security control has a file path and a test.
   Every architectural choice has a written rationale. "I thought about it" is backed
   by artifacts, not hand-waving.
-- **Graceful degradation everywhere.** Rust binary missing? Go fallback runs.
-  FMP API rate-limited? Yahoo takes over. Cache stale? Rebuild on demand.
-  No single failure should break the whole system.
+- **Graceful degradation everywhere.** Rust wasm module missing? Subprocess fallback.
+  Native binary missing? Go fallback runs. FMP API rate-limited? Yahoo takes over.
+  Cache stale? Rebuild on demand. No single failure should break the whole system.
 
 ### Guided tour (2–3 minutes)
 
@@ -73,9 +73,11 @@ make build                   # Go API + Rust binary + React frontend
 │  │  ├─ SEC-API client → Form 4 insider sells (EDGAR) │
 │  │  ├─ EODHD client   → insider transactions (paid)  │
 │  │  └─ HTTP fallback  → Yahoo v7/v8 (news)           │
-│  ├─ Rust binary       → anomaly + trend compute      │
-│  │  └─ Go fallback    → aggregator + trend pkg       │
-│  ├─ Cache layer       → file-based JSON, 24 h TTL    │
+│  ├─ Rust engine       → anomaly + trend compute      │
+│  │  ├─ Preferred: Wasm in-process (wazero, zero IPC) │
+│  │  └─ Fallback: subprocess or pure-Go               │
+│  ├─ Cache layer       → pluggable: FileStore, SQLite  │
+│  ├─ Observability     → OpenTelemetry traces (stdout) │
 │  └─ Security          → timeouts, rate limits, CSP   │
 ├──────────────────────────────────────────────────────┤
 │  Rust CLI  (rust-core/)                              │
@@ -92,11 +94,12 @@ make build                   # Go API + Rust binary + React frontend
 | `internal/fmp` | Go | Financial Modeling Prep API client |
 | `internal/dashboard` | Go | Dashboard data assembly, sparkline sampling |
 | `internal/trend` | Go | Quarterly trend (linear regression, fallback) |
-| `internal/aggregator` | Go | Z-score anomaly detection (fallback) |
-| `internal/rustclient` | Go | Subprocess bridge to Rust binary |
-| `internal/cache` | Go | File-based dashboard cache |
+| `internal/aggregator` | Go | Z-score anomaly detection with blackout-period awareness |
+| `internal/rustclient` | Go | Wasm (wazero) or subprocess bridge to Rust |
+| `internal/cache` | Go | Pluggable: `DashboardStore` interface → FileStore or SQLiteStore |
+| `internal/otel` | Go | OpenTelemetry tracing (stdout exporter, swap for OTLP) |
 | `internal/config` | Go | Environment loading via `sync.Once` |
-| `rust-core` | Rust | `vibes-anomaly` binary: anomaly + trend subcommands |
+| `rust-core` | Rust | `vibes-anomaly`: anomaly + trend (native or wasm32-wasip1) |
 
 For *why* this shape, see [docs/design.md](docs/design.md).
 
@@ -366,10 +369,13 @@ LICENSE                  MIT license
 make build          # Go + Rust + React frontend (full build)
 make demo           # Build + start + sample request + output to ./out/
 make go-build       # Go binaries only (version + commit embedded via ldflags)
-make rust-build     # Rust binary only
+make rust-build     # Rust native binary
+make rust-wasm      # Rust → wasm32-wasip1 (in-process execution via wazero)
 make frontend       # React frontend only (npm install + build)
 make frontend-dev   # Vite dev server with hot reload
 make test           # go vet + go test -race
+make fuzz           # Fuzz test SEC XML/JSON parsers (30s + 10s + 10s)
+make test-e2e       # Playwright end-to-end tests for React SPA
 make go-run         # Build Go + run API
 make go-run-op      # Build Go + run API with 1Password secrets injection
 make checksums      # SHA256 sums for bin/ artifacts

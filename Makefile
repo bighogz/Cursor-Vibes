@@ -1,4 +1,4 @@
-.PHONY: build go-build rust-build go-run go-run-op go-scan deps clean frontend frontend-dev test checksums demo
+.PHONY: build go-build rust-build rust-wasm go-run go-run-op go-scan deps clean frontend frontend-dev test fuzz test-e2e checksums demo
 
 VERSION  := $(shell cat VERSION 2>/dev/null || echo dev)
 COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -14,10 +14,24 @@ test:
 	go vet ./...
 	go test ./... -count=1 -race
 
+fuzz:
+	go test -fuzz=FuzzParseForm4XML -fuzztime=30s ./internal/secapi/
+	go test -fuzz=FuzzParseFloat -fuzztime=10s ./internal/secapi/
+	go test -fuzz=FuzzParseDate -fuzztime=10s ./internal/secapi/
+
+test-e2e:
+	cd frontend && npx playwright test
+
 rust-build:
 	@command -v cargo >/dev/null 2>&1 || { echo "Install Rust: https://rustup.rs"; exit 1; }
 	CARGO_TARGET_DIR=rust-core/target cargo build --release --manifest-path rust-core/Cargo.toml
 	@mkdir -p bin && cp rust-core/target/release/vibes-anomaly bin/ || true
+
+rust-wasm:
+	@command -v cargo >/dev/null 2>&1 || { echo "Install Rust: https://rustup.rs"; exit 1; }
+	@rustup target add wasm32-wasip1 2>/dev/null || true
+	CARGO_TARGET_DIR=rust-core/target cargo build --target wasm32-wasip1 --release --manifest-path rust-core/Cargo.toml
+	@mkdir -p bin && cp rust-core/target/wasm32-wasip1/release/vibes-anomaly.wasm bin/
 
 frontend:
 	cd frontend && npm install && npm run build

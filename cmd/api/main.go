@@ -18,6 +18,7 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/dashboard"
 	"github.com/bighogz/Cursor-Vibes/internal/fmp"
 	"github.com/bighogz/Cursor-Vibes/internal/models"
+	viotel "github.com/bighogz/Cursor-Vibes/internal/otel"
 	"github.com/bighogz/Cursor-Vibes/internal/rustclient"
 	"github.com/bighogz/Cursor-Vibes/internal/yahoo"
 )
@@ -39,6 +40,9 @@ const refreshInterval = 30 * time.Minute
 
 func main() {
 	config.Load()
+
+	shutdownTracer := viotel.Init("vibes-api", version)
+	defer shutdownTracer()
 
 	// Cold start: load disk cache into memory so the first request is instant
 	// while the background goroutine builds a fresh copy.
@@ -377,9 +381,10 @@ func fileExists(path string) bool {
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{
-		"status":  "ok",
-		"version": version,
-		"commit":  commit,
+		"status":      "ok",
+		"version":     version,
+		"commit":      commit,
+		"rust_engine": rustclient.Mode(),
 	})
 }
 
