@@ -38,6 +38,12 @@ export interface DashboardData {
   error?: string;
 }
 
+export interface AnomalyExplanation {
+  summary: string;
+  drivers: string[];
+  caveats: string[];
+}
+
 export interface ScanSignal {
   ticker: string;
   current_shares_sold: number;

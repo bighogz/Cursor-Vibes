@@ -26,6 +26,7 @@ func Load() {
 		FinancialDatasetsKey = get("FINANCIAL_DATASETS_API_KEY")
 		FMPFreeTier = getBool("FMP_FREE_TIER", "false")
 		AdminAPIKey = get("ADMIN_API_KEY")
+		AIServiceURL = getDefault("AI_SERVICE_URL", "http://localhost:8001")
 
 		cfg.loaded = true
 	})
@@ -39,6 +40,14 @@ func get(key string) string {
 func Get(key string) string {
 	Load()
 	return get(key)
+}
+
+func getDefault(key, fallback string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 func getBool(key, defaultVal string) bool {
@@ -67,6 +76,7 @@ var (
 	CurrentWindowDays   = 30
 	MinBaselinePoints   = 5
 
-	FMPFreeTier bool
-	AdminAPIKey string
+	FMPFreeTier  bool
+	AdminAPIKey  string
+	AIServiceURL string
 )

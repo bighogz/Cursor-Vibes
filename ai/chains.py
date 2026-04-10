@@ -1,8 +1,7 @@
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 
-from .schemas import AnomalyExplanation, AnomalyInput
+from .schemas import AnomalyInput
 
 SYSTEM_PROMPT = """\
 You explain insider-selling anomalies using only the provided structured data.
@@ -16,9 +15,9 @@ Rules:
 - Be concise and concrete.
 
 Return valid JSON with exactly these keys:
-- summary
-- drivers
-- caveats"""
+- "summary": string
+- "drivers": string[]
+- "caveats": string[]"""
 
 HUMAN_TEMPLATE = """\
 Ticker: {ticker}
@@ -53,16 +52,15 @@ def _format_events(req: AnomalyInput) -> str:
 
 def build_chain(model: str = "qwen3.5"):
     llm = ChatOllama(model=model, temperature=0, format="json")
-    parser = JsonOutputParser(pydantic_object=AnomalyExplanation)
     prompt = ChatPromptTemplate.from_messages(
         [("system", SYSTEM_PROMPT), ("human", HUMAN_TEMPLATE)]
     )
-    return prompt | llm | parser
+    return prompt | llm
 
 
-async def explain_anomaly(req: AnomalyInput, model: str = "qwen3.5") -> AnomalyExplanation:
+async def explain_anomaly(req: AnomalyInput, model: str = "qwen3.5"):
     chain = build_chain(model)
-    raw = await chain.ainvoke(
+    return await chain.ainvoke(
         {
             "ticker": req.ticker,
             "company_name": req.company_name,
@@ -75,4 +73,3 @@ async def explain_anomaly(req: AnomalyInput, model: str = "qwen3.5") -> AnomalyE
             "source_notes": req.source_notes or "N/A",
         }
     )
-    return AnomalyExplanation.model_validate(raw)

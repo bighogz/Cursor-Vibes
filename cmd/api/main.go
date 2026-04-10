@@ -57,6 +57,7 @@ func main() {
 	http.HandleFunc("/api/dashboard/refresh", securityHeaders(adminOrRateLimit(handleRefresh)))
 	http.HandleFunc("/api/dashboard/meta", securityHeaders(handleMeta))
 	http.HandleFunc("/api/scan", securityHeaders(adminOrRateLimit(rateLimitScan(handleScan))))
+	http.HandleFunc("/api/ai/explain-anomaly", securityHeaders(handleAIExplain))
 	http.HandleFunc("/api/health", securityHeaders(handleHealth))
 	http.HandleFunc("/api/health/providers", securityHeaders(handleProviders))
 

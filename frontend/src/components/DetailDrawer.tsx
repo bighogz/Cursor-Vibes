@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { fmtPrice, fmtPct, fmtShares, fmtValue } from "../lib/format";
 import { Sparkline } from "./Sparkline";
 import { IconX, IconExternalLink } from "./icons";
-import type { Company } from "../types/dashboard";
+import type { AnomalyExplanation, Company } from "../types/dashboard";
 
 interface Props {
   company: Company;
@@ -34,6 +34,34 @@ export function DetailDrawer({ company: c, onClose }: Props) {
   const isUp = (c.quarter_trend ?? 0) >= 0;
   const hasNews = c.news && c.news.length > 0;
   const hasInsiders = c.top_insiders && c.top_insiders.length > 0;
+
+  const [explanation, setExplanation] = useState<AnomalyExplanation | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  // Reset AI state when switching companies
+  useEffect(() => {
+    setExplanation(null);
+    setAiError(null);
+    setAiLoading(false);
+  }, [c.symbol]);
+
+  const fetchExplanation = useCallback(async () => {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch(`/api/ai/explain-anomaly?ticker=${encodeURIComponent(c.symbol)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(body.detail ?? body.error ?? `HTTP ${res.status}`);
+      }
+      setExplanation(await res.json());
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiLoading(false);
+    }
+  }, [c.symbol]);
 
   return (
     <div
@@ -233,6 +261,78 @@ export function DetailDrawer({ company: c, onClose }: Props) {
             </div>
           </Section>
         )}
+
+        {/* AI Anomaly Explanation */}
+        <Section title="AI Anomaly Explanation">
+          {explanation ? (
+            <div className="space-y-3">
+              <p className="text-xs text-content-secondary leading-relaxed">
+                {explanation.summary}
+              </p>
+              {explanation.drivers.length > 0 && (
+                <div>
+                  <h4 className="text-2xs font-medium text-content-muted mb-1">
+                    Drivers
+                  </h4>
+                  <ul className="space-y-0.5">
+                    {explanation.drivers.map((d, i) => (
+                      <li
+                        key={i}
+                        className="text-xs text-content-secondary flex gap-1.5"
+                      >
+                        <span className="text-content-muted flex-shrink-0">•</span>
+                        {d}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {explanation.caveats.length > 0 && (
+                <div>
+                  <h4 className="text-2xs font-medium text-content-muted mb-1">
+                    Caveats
+                  </h4>
+                  <ul className="space-y-0.5">
+                    {explanation.caveats.map((cv, i) => (
+                      <li
+                        key={i}
+                        className="text-xs text-content-secondary flex gap-1.5"
+                      >
+                        <span className="text-content-muted flex-shrink-0">•</span>
+                        {cv}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <button
+                onClick={fetchExplanation}
+                disabled={aiLoading}
+                className="text-2xs text-content-muted hover:text-content transition-colors"
+              >
+                Re-run
+              </button>
+            </div>
+          ) : (
+            <div>
+              {aiError && (
+                <p className="text-xs text-negative mb-2">{aiError}</p>
+              )}
+              <button
+                onClick={fetchExplanation}
+                disabled={aiLoading}
+                className={cn(
+                  "text-xs px-3 py-1.5 rounded-md border transition-colors",
+                  aiLoading
+                    ? "border-line text-content-muted cursor-wait"
+                    : "border-accent text-accent hover:bg-accent hover:text-white"
+                )}
+              >
+                {aiLoading ? "Analyzing…" : "Explain Anomaly"}
+              </button>
+            </div>
+          )}
+        </Section>
       </div>
     </div>
   );

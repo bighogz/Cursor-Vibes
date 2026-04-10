@@ -1,7 +1,8 @@
 # S&P 500 Insider Selling Tracker
 
-Real-time tracking of insider selling across all S&P 500 companies with anomaly detection.
-Built with **Go**, **Rust**, and a **React** frontend — zero Python runtime dependency.
+Real-time tracking of insider selling across all S&P 500 companies with anomaly detection
+and local LLM-powered anomaly explanations.
+Built with **Go**, **Rust**, a **React** frontend, and a **Python** AI sidecar.
 
 > **This is a portfolio project.** It's not deployed. The code is the deliverable.
 > Run `make demo` for a self-contained local proof, or read on for the thinking behind it.
@@ -41,7 +42,7 @@ If you're reviewing this repo, read in this order:
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.23+, Node.js 18+, Rust (optional — rustup.rs)
+# Prerequisites: Go 1.23+, Node.js 18+, Rust (optional), Python 3.9+ & Ollama (optional, for AI)
 cp .env.example .env        # add your FMP_API_KEY
 make demo                    # builds, starts, samples, writes ./out/
 ```
@@ -62,23 +63,32 @@ make build                   # Go API + Rust binary + React frontend
 │  React SPA  (frontend/)                              │
 │  ├─ AppShell  (sidebar + topbar + content)           │
 │  ├─ DataTable (keyboard nav, sector groups)          │
-│  ├─ DetailDrawer (price, sparkline, news, insiders)  │
+│  ├─ DetailDrawer (price, sparkline, news, insiders,  │
+│  │                AI anomaly explanation)             │
 │  ├─ CommandPalette (⌘K fuzzy search)                 │
 │  └─ Anomaly Scan page + Settings page                │
 ├──────────────────────────────────────────────────────┤
 │  Go API  (cmd/api) — port 8000                       │
 │  ├─ Dashboard builder → prices, trends, news         │
 │  │  ├─ go-yfinance    → Yahoo Finance (native Go)    │
-│  │  ├─ FMP client     → S&P 500 list, insider latest  │
+│  │  ├─ FMP client     → S&P 500 list, insider latest │
 │  │  ├─ SEC-API client → Form 4 insider sells (EDGAR) │
 │  │  ├─ EODHD client   → insider transactions (paid)  │
 │  │  └─ HTTP fallback  → Yahoo v7/v8 (news)           │
+│  ├─ AI proxy          → assembles payload from       │
+│  │                       dashboard, forwards to       │
+│  │                       Python sidecar               │
 │  ├─ Rust engine       → anomaly + trend compute      │
 │  │  ├─ Preferred: Wasm in-process (wazero, zero IPC) │
 │  │  └─ Fallback: subprocess or pure-Go               │
-│  ├─ Cache layer       → pluggable: FileStore, SQLite  │
+│  ├─ Cache layer       → pluggable: FileStore, SQLite │
 │  ├─ Observability     → OpenTelemetry traces (stdout) │
 │  └─ Security          → timeouts, rate limits, CSP   │
+├──────────────────────────────────────────────────────┤
+│  Python AI sidecar  (ai/) — port 8001                │
+│  ├─ FastAPI + Pydantic → POST /explain-anomaly       │
+│  ├─ LangChain prompt   → structured JSON output      │
+│  └─ Ollama (qwen3.5)   → local LLM, no cloud calls  │
 ├──────────────────────────────────────────────────────┤
 │  Rust CLI  (rust-core/)                              │
 │  └─ vibes-anomaly: anomaly + trend subcommands       │
@@ -99,6 +109,7 @@ make build                   # Go API + Rust binary + React frontend
 | `internal/cache` | Go | Pluggable: `DashboardStore` interface → FileStore or SQLiteStore |
 | `internal/otel` | Go | OpenTelemetry tracing (stdout exporter, swap for OTLP) |
 | `internal/config` | Go | Environment loading via `sync.Once` |
+| `ai/` | Python | FastAPI sidecar: LLM anomaly explanation via Ollama |
 | `rust-core` | Rust | `vibes-anomaly`: anomaly + trend (native or wasm32-wasip1) |
 
 For *why* this shape, see [docs/design.md](docs/design.md).
@@ -111,7 +122,7 @@ The UI is a Linear-inspired React SPA:
 
 - **Sidebar** — Navigation + collapsible sector filter groups
 - **DataTable** — Dense rows with sector headers, prices, sparklines, news, insider sellers
-- **DetailDrawer** — Slide-in panel on row click (deep-linkable via `?stock=AAPL`)
+- **DetailDrawer** — Slide-in panel on row click (deep-linkable via `?stock=AAPL`), with "Explain Anomaly" button for LLM analysis
 - **CommandPalette** — `⌘K` / `Ctrl+K` fuzzy search across stocks and actions
 - **Keyboard navigation** — `j`/`k` move focus, `Enter` opens drawer, `Esc` closes
 - **Pages** — Dashboard, Anomaly Scan (with configurable params), Settings
@@ -183,6 +194,15 @@ Yahoo Finance handles prices, trends, and news with no API key.
    ./bin/api        # http://localhost:8000
    ```
 
+6. **AI anomaly explanations** (optional):
+
+   ```bash
+   ollama pull qwen3.5                  # one-time model download (~6.6 GB)
+   python3 -m venv ai/.venv             # create virtualenv
+   ai/.venv/bin/pip install -r ai/requirements.txt
+   OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
+   ```
+
 ---
 
 ## Configuration
@@ -196,6 +216,8 @@ Yahoo Finance handles prices, trends, and news with no API key.
 | `SEC_API_KEY` | *(optional)* | SEC-API.io key for Form 3/4/5 data |
 | `FINANCIAL_DATASETS_API_KEY` | *(optional)* | Financial Datasets API key |
 | `EODHD_API_KEY` | *(optional)* | EODHD API key |
+| `AI_SERVICE_URL` | `http://localhost:8001` | Python AI sidecar URL |
+| `OLLAMA_MODEL` | `qwen3.5` | Ollama model for anomaly explanations (sidecar-side) |
 | `PORT` | `8000` | HTTP listen port |
 
 See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the full security-impact analysis of every setting.
@@ -213,6 +235,7 @@ See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the
 | GET | `/api/dashboard/meta` | Cache metadata (last updated timestamp) |
 | GET | `/api/health` | Health check — returns `version` and `commit` |
 | GET | `/api/health/providers` | Provider diagnostics (Yahoo, FMP status) |
+| GET | `/api/ai/explain-anomaly?ticker=` | LLM anomaly explanation (proxied to Python sidecar) |
 | POST | `/api/scan` | Run anomaly detection (admin key required if set) |
 
 ---
@@ -232,6 +255,54 @@ Otherwise, the identical algorithm runs in Go (`internal/aggregator`).
 # CLI scan
 ./bin/scan --baseline-days 365 --current-days 30 --std-threshold 2.5 --list-all-signals
 ```
+
+---
+
+## AI Anomaly Explanation
+
+When you click "Explain Anomaly" in the detail drawer, the system produces a structured,
+non-speculative explanation of the insider activity for that company. The full chain:
+
+```
+React → GET /api/ai/explain-anomaly?ticker=AAPL (Go :8000)
+         → Go assembles payload from in-memory dashboard store
+         → POST /explain-anomaly (Python sidecar :8001)
+           → qwen3.5 via Ollama (local, no cloud API calls)
+         ← { summary, drivers[], caveats[] }
+```
+
+**Why this shape:**
+
+- **Go assembles the payload.** The handler pulls everything from the in-memory dashboard
+  store — company name, sector, quarterly trend, insider events, data sources. Zero live API
+  calls, so the Go side responds in microseconds; the latency is pure LLM inference.
+- **Python owns the LLM interaction.** FastAPI + LangChain + Pydantic handle prompt
+  templating, model configuration, and response validation. Go doesn't import any AI
+  libraries.
+- **React only talks to Go.** The frontend has no knowledge of the Python service. The Go
+  endpoint is the single API surface.
+- **Everything runs locally.** Ollama serves qwen3.5 on-device. No data leaves the machine.
+  No API keys, no cloud LLM costs.
+
+**What the model is told not to do:**
+
+The system prompt explicitly forbids speculation about illegality, insider intent, future
+stock performance, and investment advice. If context is limited, it says so. The response
+is grounded in the structured data the Go backend provides — nothing more.
+
+**Running the AI service:**
+
+```bash
+# Terminal 1 — pull the model once, then start the sidecar
+ollama pull qwen3.5
+OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
+
+# Terminal 2 — Go API (sidecar URL defaults to http://localhost:8001)
+./bin/api
+```
+
+The AI sidecar is optional. If it's not running, the "Explain Anomaly" button returns a
+502 error — the rest of the dashboard works normally.
 
 ---
 
@@ -317,6 +388,11 @@ Architectural decisions are documented as ADRs in [docs/decisions/](docs/decisio
 ## Project Layout
 
 ```
+ai/
+  app.py                 FastAPI service: POST /explain-anomaly
+  chains.py              LangChain prompt + Ollama chain (qwen3.5)
+  schemas.py             Pydantic models: AnomalyInput, AnomalyExplanation
+  requirements.txt       Pinned Python dependencies
 docs/
   design.md              Tradeoffs, constraints, non-goals
   ops-lite.md            How I'd deploy this (not deployed)
@@ -328,7 +404,7 @@ frontend/                React + TypeScript + Tailwind SPA
   src/components/        AppShell, SidebarNav, DataTable, DetailDrawer, CommandPalette
   src/pages/             Dashboard, Scan, Settings
   src/lib/               API client, formatters
-cmd/api/                 Go HTTP server (dashboard, health, scan)
+cmd/api/                 Go HTTP server (dashboard, health, scan, AI proxy)
 cmd/scan/                Go CLI (anomaly scanner)
 internal/
   aggregator/            Z-score anomaly detection (Go fallback)
