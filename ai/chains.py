@@ -1,7 +1,11 @@
+from functools import lru_cache
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 
 from .schemas import AnomalyInput
+
+DEFAULT_MODEL = "qwen3.5"
 
 SYSTEM_PROMPT = """\
 You explain insider-selling anomalies using only the provided structured data.
@@ -12,7 +16,11 @@ Rules:
 - Do not predict future stock performance.
 - Do not give investment advice.
 - If context is limited, say so plainly.
+- If fields are missing or marked N/A, mention that in caveats instead of inferring details.
 - Be concise and concrete.
+- Return only valid JSON.
+- Do not wrap the JSON in markdown.
+- Do not include any text before or after the JSON.
 
 Return valid JSON with exactly these keys:
 - "summary": string
@@ -37,20 +45,22 @@ Source notes: {source_notes}"""
 def _format_events(req: AnomalyInput) -> str:
     if not req.recent_events:
         return "(none)"
+
     lines = []
     for e in req.recent_events:
-        parts = [e.date, e.insider_name]
+        line = f"- date: {e.date}; insider: {e.insider_name}"
         if e.role:
-            parts.append(f"({e.role})")
+            line += f"; role: {e.role}"
         if e.shares_sold is not None:
-            parts.append(f"{e.shares_sold:,.0f} shares")
+            line += f"; shares_sold: {e.shares_sold:,.0f}"
         if e.value_usd is not None:
-            parts.append(f"${e.value_usd:,.0f}")
-        lines.append(" | ".join(parts))
+            line += f"; value_usd: ${e.value_usd:,.0f}"
+        lines.append(line)
     return "\n".join(lines)
 
 
-def build_chain(model: str = "qwen3.5"):
+@lru_cache(maxsize=4)
+def build_chain(model: str = DEFAULT_MODEL):
     llm = ChatOllama(model=model, temperature=0, format="json")
     prompt = ChatPromptTemplate.from_messages(
         [("system", SYSTEM_PROMPT), ("human", HUMAN_TEMPLATE)]
@@ -58,7 +68,7 @@ def build_chain(model: str = "qwen3.5"):
     return prompt | llm
 
 
-async def explain_anomaly(req: AnomalyInput, model: str = "qwen3.5"):
+async def explain_anomaly(req: AnomalyInput, model: str = DEFAULT_MODEL):
     chain = build_chain(model)
     return await chain.ainvoke(
         {
