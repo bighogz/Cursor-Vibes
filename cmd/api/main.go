@@ -40,6 +40,7 @@ const refreshInterval = 30 * time.Minute
 
 func main() {
 	config.Load()
+	initAIClient()
 
 	shutdownTracer := viotel.Init("vibes-api", version)
 	defer shutdownTracer()

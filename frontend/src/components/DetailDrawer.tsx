@@ -262,9 +262,9 @@ export function DetailDrawer({ company: c, onClose }: Props) {
           </Section>
         )}
 
-        {/* AI Anomaly Explanation */}
-        <Section title="AI Anomaly Explanation">
-          {explanation ? (
+        {/* AI Anomaly Explanation — hidden until user clicks */}
+        {explanation ? (
+          <Section title="AI Anomaly Explanation">
             <div className="space-y-3">
               <p className="text-xs text-content-secondary leading-relaxed">
                 {explanation.summary}
@@ -313,26 +313,26 @@ export function DetailDrawer({ company: c, onClose }: Props) {
                 Re-run
               </button>
             </div>
-          ) : (
-            <div>
-              {aiError && (
-                <p className="text-xs text-negative mb-2">{aiError}</p>
+          </Section>
+        ) : (
+          <div>
+            {aiError && (
+              <p className="text-2xs text-negative mb-1.5">{aiError}</p>
+            )}
+            <button
+              onClick={fetchExplanation}
+              disabled={aiLoading}
+              className={cn(
+                "text-xs px-3 py-1.5 rounded-md border transition-colors",
+                aiLoading
+                  ? "border-line text-content-muted cursor-wait"
+                  : "border-accent text-accent hover:bg-accent hover:text-white"
               )}
-              <button
-                onClick={fetchExplanation}
-                disabled={aiLoading}
-                className={cn(
-                  "text-xs px-3 py-1.5 rounded-md border transition-colors",
-                  aiLoading
-                    ? "border-line text-content-muted cursor-wait"
-                    : "border-accent text-accent hover:bg-accent hover:text-white"
-                )}
-              >
-                {aiLoading ? "Analyzing…" : "Explain Anomaly"}
-              </button>
-            </div>
-          )}
-        </Section>
+            >
+              {aiLoading ? "Analyzing…" : "Explain Anomaly"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

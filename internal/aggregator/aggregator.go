@@ -144,6 +144,26 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 
 const unifiedCachePath = "data/insider_unified_cache.json"
 
+// LoadCachedRecords returns insider records from the on-disk unified cache
+// without making any API calls. Returns nil if the cache doesn't exist.
+func LoadCachedRecords(tickers []string) []models.InsiderSellRecord {
+	all := loadUnifiedCache()
+	if len(tickers) == 0 {
+		return all
+	}
+	set := make(map[string]bool, len(tickers))
+	for _, t := range tickers {
+		set[strings.ToUpper(t)] = true
+	}
+	filtered := make([]models.InsiderSellRecord, 0, len(tickers)*4)
+	for _, r := range all {
+		if set[strings.ToUpper(r.Ticker)] {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
 func loadUnifiedCache() []models.InsiderSellRecord {
 	f, err := os.Open(unifiedCachePath)
 	if err != nil {
