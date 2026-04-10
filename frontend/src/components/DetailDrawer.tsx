@@ -168,6 +168,9 @@ export function DetailDrawer({ company: c, onClose }: Props) {
                 <thead>
                   <tr className="bg-surface-0 border-b border-line">
                     <th className="text-left px-3 py-1.5 text-2xs font-medium text-content-muted uppercase tracking-wider">
+                      Type
+                    </th>
+                    <th className="text-left px-3 py-1.5 text-2xs font-medium text-content-muted uppercase tracking-wider">
                       Name
                     </th>
                     <th className="text-right px-3 py-1.5 text-2xs font-medium text-content-muted uppercase tracking-wider">
@@ -184,8 +187,11 @@ export function DetailDrawer({ company: c, onClose }: Props) {
                       key={i}
                       className="border-b border-line last:border-b-0"
                     >
+                      <td className="px-3 py-2 text-content-muted text-2xs">
+                        {ins.tx_type ?? "—"}
+                      </td>
                       <td className="px-3 py-2 text-content-secondary">
-                        <div className="truncate max-w-[160px]" title={ins.name}>
+                        <div className="truncate max-w-[140px]" title={ins.name}>
                           {ins.name}
                         </div>
                         {ins.role && (

@@ -11,6 +11,7 @@ type InsiderSellRecord struct {
 	FilingDate      *time.Time `json:"filing_date,omitempty"`
 	SharesSold      float64    `json:"shares_sold"`
 	ValueUSD        *float64   `json:"value_usd,omitempty"`
+	TxType          string     `json:"tx_type,omitempty"`
 	Source          string     `json:"source"`
 }
 
@@ -53,11 +54,12 @@ type NewsItem struct {
 	URL   string `json:"url"`
 }
 
-// InsiderEntry is an insider sell record displayed on the dashboard.
+// InsiderEntry is an insider transaction displayed on the dashboard.
 type InsiderEntry struct {
 	Name   string   `json:"name"`
 	Role   *string  `json:"role,omitempty"`
 	Shares float64  `json:"shares"`
 	Value  *float64 `json:"value,omitempty"`
+	TxType string   `json:"tx_type"`
 	Source string   `json:"source"`
 }

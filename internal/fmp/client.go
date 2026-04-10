@@ -228,7 +228,6 @@ func (c *Client) fetchLatestInsiderPages(tickerFilter map[string]bool, dateFrom,
 		params := url.Values{}
 		params.Set("page", strconv.Itoa(p))
 		params.Set("limit", "100")
-		params.Set("transactionType", "S-Sale")
 		data, err := c.get("/insider-trading/latest", params)
 		if err != nil || data == nil {
 			break
@@ -323,8 +322,8 @@ func parseInsiderRecords(data interface{}, tickerFilter map[string]bool, dateFro
 		}
 		acqDisp := strings.ToUpper(str(m["acquisitionOrDisposition"]) + str(m["acquiredDisposedCode"]))
 		transType := strings.ToLower(str(m["transactionType"]))
-		isSell := acqDisp == "D" || strings.Contains(transType, "sale") || strings.Contains(transType, "s-sale") || strings.HasPrefix(transType, "s") || acqDisp == "DD"
-		if !isSell {
+		txType := classifyFMPTx(transType, acqDisp)
+		if txType == "" {
 			continue
 		}
 		tickerSym := strings.TrimSpace(strings.ToUpper(strOr(m["symbol"], m["ticker"])))
@@ -376,6 +375,7 @@ func parseInsiderRecords(data interface{}, tickerFilter map[string]bool, dateFro
 			FilingDate:      filingDate,
 			SharesSold:      shares,
 			ValueUSD:        valueUSD,
+			TxType:          txType,
 			Source:          "fmp",
 		})
 	}
@@ -485,6 +485,24 @@ func (c *Client) GetHistoricalRange(ticker, fromDate, toDate string) []map[strin
 		return out
 	}
 	return nil
+}
+
+// classifyFMPTx maps FMP transactionType strings to human-readable labels.
+// Returns "" for transaction types we don't track (e.g., pure acquisitions).
+func classifyFMPTx(transType, acqDisp string) string {
+	switch {
+	case strings.Contains(transType, "sale") || strings.HasPrefix(transType, "s-") || strings.HasPrefix(transType, "s "):
+		return "Sale"
+	case strings.Contains(transType, "f-inkind") || strings.Contains(transType, "f - in"):
+		return "Tax"
+	case strings.Contains(transType, "m-exempt") || strings.Contains(transType, "m - ex"):
+		return "Exercise"
+	case strings.HasPrefix(transType, "d-") || strings.HasPrefix(transType, "d "):
+		return "Disposition"
+	case acqDisp == "D" || acqDisp == "DD":
+		return "Disposition"
+	}
+	return ""
 }
 
 func str(v interface{}) string {

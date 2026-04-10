@@ -110,7 +110,7 @@ export function DataTable({
             <Th className="w-[72px] text-right">Change</Th>
             <Th className="w-[180px]">Quarterly Trend</Th>
             <Th className="w-[180px]">Recent News</Th>
-            <Th className="min-w-[150px]">Top Insiders</Th>
+            <Th className="min-w-[170px]">Insider Activity</Th>
           </tr>
         </thead>
         <tbody>
@@ -288,7 +288,7 @@ const CompanyRow = memo(function CompanyRow({
         )}
       </td>
 
-      {/* Top Insiders */}
+      {/* Insider Activity */}
       <td className="px-3 py-2.5">
         {hasInsiders ? (
           <div className="space-y-0.5">
@@ -297,7 +297,10 @@ const CompanyRow = memo(function CompanyRow({
                 key={idx}
                 className="flex items-center gap-1.5 text-xs text-content-secondary"
               >
-                <span className="truncate max-w-[100px]" title={ins.name}>
+                {ins.tx_type && (
+                  <TxBadge type={ins.tx_type} />
+                )}
+                <span className="truncate max-w-[90px]" title={ins.name}>
                   {ins.name}
                 </span>
                 <span className="text-content-muted tabular-nums flex-shrink-0">
@@ -318,6 +321,27 @@ const CompanyRow = memo(function CompanyRow({
     </tr>
   );
 });
+
+const TX_COLORS: Record<string, string> = {
+  Sale: "bg-negative-dim text-negative",
+  Tax: "bg-amber-500/10 text-amber-500",
+  Exercise: "bg-blue-500/10 text-blue-500",
+  Disposition: "bg-orange-500/10 text-orange-500",
+};
+
+function TxBadge({ type }: { type: string }) {
+  const color = TX_COLORS[type] ?? "bg-surface-2 text-content-muted";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-1 py-0 rounded text-2xs font-medium flex-shrink-0",
+        color
+      )}
+    >
+      {type.charAt(0)}
+    </span>
+  );
+}
 
 function Muted() {
   return <span className="text-content-muted">—</span>;

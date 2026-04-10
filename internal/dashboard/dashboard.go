@@ -358,6 +358,7 @@ func topInsidersByTicker(records []models.InsiderSellRecord) map[string][]models
 			Role:   r.Role,
 			Shares: r.SharesSold,
 			Value:  r.ValueUSD,
+			TxType: r.TxType,
 			Source: r.Source,
 		})
 	}

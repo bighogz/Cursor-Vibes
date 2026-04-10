@@ -82,14 +82,16 @@ func FuzzParseDate(f *testing.F) {
 	})
 }
 
-func FuzzIsSaleTransaction(f *testing.F) {
+func FuzzClassifyTxCode(f *testing.F) {
 	f.Add("S", "D")
 	f.Add("P", "A")
 	f.Add("", "")
 	f.Add("s", "d")
 	f.Add("D", "D")
+	f.Add("F", "D")
+	f.Add("M", "A")
 
 	f.Fuzz(func(t *testing.T, code, acqDisp string) {
-		isSaleTransaction(code, acqDisp)
+		classifyTxCode(code, acqDisp)
 	})
 }

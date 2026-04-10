@@ -59,6 +59,7 @@ func (c *Client) GetInsiderSells(tickerFilter map[string]bool, dateFrom, dateTo 
 		batch := allTickers[b*batchSize : end]
 		filings := c.queryForm4Filings(batch, dateFrom)
 		allFilings = append(allFilings, filings...)
+		time.Sleep(1200 * time.Millisecond) // Respect SEC-API.io rate limit
 	}
 
 	if len(allFilings) == 0 {
@@ -297,7 +298,8 @@ func (c *Client) parseForm4XML(f form4Filing, dateFrom, dateTo time.Time) []mode
 
 	var out []models.InsiderSellRecord
 	process := func(date, code, shares, price, acqDisp string) {
-		if !isSaleTransaction(code, acqDisp) {
+		txType := classifyTxCode(code, acqDisp)
+		if txType == "" {
 			return
 		}
 		txDate, ok := parseDate(date)
@@ -342,6 +344,7 @@ func (c *Client) parseForm4XML(f form4Filing, dateFrom, dateTo time.Time) []mode
 			FilingDate:      filingDate,
 			SharesSold:      sh,
 			ValueUSD:        valueUSD,
+			TxType:          txType,
 			Source:          "sec",
 		})
 	}
@@ -357,9 +360,23 @@ func (c *Client) parseForm4XML(f form4Filing, dateFrom, dateTo time.Time) []mode
 	return out
 }
 
-func isSaleTransaction(code, acqDisp string) bool {
+// classifyTxCode returns a human-readable transaction type label for Form 4
+// transaction codes, or "" if the transaction should be skipped.
+func classifyTxCode(code, acqDisp string) string {
 	code = strings.ToUpper(strings.TrimSpace(code))
-	return code == "S" || (code == "D" && strings.ToUpper(strings.TrimSpace(acqDisp)) == "D")
+	switch code {
+	case "S":
+		return "Sale"
+	case "F":
+		return "Tax"
+	case "M":
+		return "Exercise"
+	case "D":
+		if strings.ToUpper(strings.TrimSpace(acqDisp)) == "D" {
+			return "Disposition"
+		}
+	}
+	return ""
 }
 
 func ownerRole(isDir, isOff, title, isTen string) string {

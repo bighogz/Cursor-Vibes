@@ -115,7 +115,7 @@ func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []model
 	}
 	if len(missing) > 0 {
 		eClient := edgar.New()
-		maxFetches := min(200, len(missing)*2)
+		maxFetches := min(800, len(missing)*5)
 		recs := eClient.GetInsiderSells(missing, dateFrom, maxFetches)
 		added := 0
 		for _, r := range recs {

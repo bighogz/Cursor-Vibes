@@ -20,6 +20,8 @@ export interface Insider {
   role?: string;
   shares: number;
   value?: number | null;
+  tx_type?: string;
+  source?: string;
 }
 
 export interface Sector {
