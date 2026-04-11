@@ -2,15 +2,23 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { fmtPrice, fmtPct, fmtShares } from "../lib/format";
 import { Sparkline } from "./Sparkline";
-import type { Company, Sector } from "../types/dashboard";
+import type { Company, Sector, TrendKey } from "../types/dashboard";
 
 const COL_COUNT = 7;
+
+const TREND_LABELS: Record<TrendKey, string> = {
+  daily: "1D Trend",
+  weekly: "1W Trend",
+  monthly: "1M Trend",
+  quarterly: "3M Trend",
+};
 
 interface Props {
   sectors: Sector[];
   selectedStock: string;
   onSelectStock: (sym: string) => void;
   loading: boolean;
+  trendPeriod?: TrendKey;
 }
 
 interface FlatRow {
@@ -40,6 +48,7 @@ export function DataTable({
   selectedStock,
   onSelectStock,
   loading,
+  trendPeriod = "quarterly",
 }: Props) {
   const flat = flatten(sectors);
   const companyIndices = flat
@@ -108,7 +117,7 @@ export function DataTable({
             <Th className="w-[14%]">Company</Th>
             <Th className="w-[80px] text-right">Price</Th>
             <Th className="w-[72px] text-right">Change</Th>
-            <Th className="w-[180px]">Quarterly Trend</Th>
+            <Th className="w-[180px]">{TREND_LABELS[trendPeriod]}</Th>
             <Th className="w-[180px]">Recent News</Th>
             <Th className="min-w-[170px]">Insider Activity</Th>
           </tr>
@@ -125,6 +134,7 @@ export function DataTable({
               <CompanyRow
                 key={row.company!.symbol}
                 company={row.company!}
+                trendPeriod={trendPeriod}
                 dataRow={i}
                 selected={row.company!.symbol === selectedStock}
                 focused={companyIndices[focusedIdx] === i}
@@ -180,19 +190,24 @@ const SectorHeader = memo(function SectorHeader({
 
 const CompanyRow = memo(function CompanyRow({
   company: c,
+  trendPeriod,
   dataRow,
   selected,
   focused,
   onClick,
 }: {
   company: Company;
+  trendPeriod: TrendKey;
   dataRow: number;
   selected: boolean;
   focused: boolean;
   onClick: () => void;
 }) {
   const handleClick = useCallback(() => onClick(), [onClick]);
-  const isUp = (c.quarter_trend ?? 0) >= 0;
+  const tp = c.trends?.[trendPeriod];
+  const trendPct = tp?.pct ?? c.quarter_trend ?? null;
+  const trendCloses = tp?.closes ?? c.quarter_closes ?? null;
+  const isUp = (trendPct ?? 0) >= 0;
   const hasNews = c.news && c.news.length > 0;
   const hasInsiders = c.top_insiders && c.top_insiders.length > 0;
 
@@ -249,12 +264,12 @@ const CompanyRow = memo(function CompanyRow({
         )}
       </td>
 
-      {/* Quarterly trend */}
+      {/* Trend */}
       <td className="px-3 py-2.5">
-        {c.quarter_trend != null ? (
+        {trendPct != null ? (
           <div className="flex items-center gap-2">
-            {c.quarter_closes && c.quarter_closes.length >= 2 && (
-              <Sparkline data={c.quarter_closes} positive={isUp} />
+            {trendCloses && trendCloses.length >= 2 && (
+              <Sparkline data={trendCloses} positive={isUp} />
             )}
             <span
               className={cn(
@@ -262,7 +277,7 @@ const CompanyRow = memo(function CompanyRow({
                 isUp ? "text-positive" : "text-negative"
               )}
             >
-              {fmtPct(c.quarter_trend)}
+              {fmtPct(trendPct)}
             </span>
           </div>
         ) : (

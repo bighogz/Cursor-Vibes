@@ -5,7 +5,7 @@ import { CommandPalette } from "./CommandPalette";
 import { DetailDrawer } from "./DetailDrawer";
 import { ToastContainer } from "./Toast";
 import { fetchDashboard } from "../lib/api";
-import type { Company, DashboardData } from "../types/dashboard";
+import type { Company, DashboardData, TrendKey } from "../types/dashboard";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -19,6 +19,7 @@ export function AppShell() {
 
   const sector = searchParams.get("sector") ?? "";
   const selectedStock = searchParams.get("stock") ?? "";
+  const trendPeriod = (searchParams.get("trend") ?? "quarterly") as TrendKey;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,6 +94,16 @@ export function AppShell() {
     setSearchParams(next);
   };
 
+  const handleTrendChange = (t: TrendKey) => {
+    const next = new URLSearchParams(searchParams);
+    if (t === "quarterly") {
+      next.delete("trend");
+    } else {
+      next.set("trend", t);
+    }
+    setSearchParams(next);
+  };
+
   const handleSelectStock = (sym: string) => {
     const next = new URLSearchParams(searchParams);
     if (sym && sym !== selectedStock) {
@@ -130,6 +141,8 @@ export function AppShell() {
         sectors={fullData?.available_sectors ?? []}
         activeSector={sector}
         onSectorChange={handleSectorChange}
+        activeTrend={trendPeriod}
+        onTrendChange={handleTrendChange}
         onOpenCommandPalette={() => setCmdOpen(true)}
       />
 
@@ -171,6 +184,7 @@ export function AppShell() {
                 loading,
                 error,
                 selectedStock,
+                trendPeriod,
                 onSelectStock: handleSelectStock,
                 onRefresh: () => load(),
               }}
@@ -180,6 +194,7 @@ export function AppShell() {
           {selectedCompany && (
             <DetailDrawer
               company={selectedCompany}
+              trendPeriod={trendPeriod}
               onClose={handleCloseDrawer}
             />
           )}
@@ -204,6 +219,7 @@ export interface DashboardOutletContext {
   loading: boolean;
   error: string | null;
   selectedStock: string;
+  trendPeriod: TrendKey;
   onSelectStock: (sym: string) => void;
   onRefresh: () => void;
 }

@@ -3,14 +3,22 @@ import { cn } from "../lib/cn";
 import { fmtPrice, fmtPct, fmtShares, fmtValue } from "../lib/format";
 import { Sparkline } from "./Sparkline";
 import { IconX, IconExternalLink } from "./icons";
-import type { AnomalyExplanation, Company } from "../types/dashboard";
+import type { AnomalyExplanation, Company, TrendKey } from "../types/dashboard";
+
+const TREND_LABELS: Record<TrendKey, string> = {
+  daily: "1 day",
+  weekly: "1 week",
+  monthly: "1 month",
+  quarterly: "13 weeks",
+};
 
 interface Props {
   company: Company;
+  trendPeriod?: TrendKey;
   onClose: () => void;
 }
 
-export function DetailDrawer({ company: c, onClose }: Props) {
+export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }: Props) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
   // Focus trap: focus the drawer on mount
@@ -31,7 +39,10 @@ export function DetailDrawer({ company: c, onClose }: Props) {
     return () => el?.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const isUp = (c.quarter_trend ?? 0) >= 0;
+  const tp = c.trends?.[trendPeriod];
+  const trendPct = tp?.pct ?? c.quarter_trend ?? null;
+  const trendCloses = tp?.closes ?? c.quarter_closes ?? null;
+  const isUp = (trendPct ?? 0) >= 0;
   const hasNews = c.news && c.news.length > 0;
   const hasInsiders = c.top_insiders && c.top_insiders.length > 0;
 
@@ -128,9 +139,9 @@ export function DetailDrawer({ company: c, onClose }: Props) {
           )}
         </Section>
 
-        {/* Quarterly trend */}
-        <Section title="Quarterly Trend">
-          {c.quarter_trend != null ? (
+        {/* Trend */}
+        <Section title={`Price Trend (${TREND_LABELS[trendPeriod]})`}>
+          {trendPct != null ? (
             <div>
               <div className="flex items-center gap-3 mb-2">
                 <span
@@ -139,14 +150,14 @@ export function DetailDrawer({ company: c, onClose }: Props) {
                     isUp ? "text-positive" : "text-negative"
                   )}
                 >
-                  {fmtPct(c.quarter_trend)}
+                  {fmtPct(trendPct)}
                 </span>
-                <span className="text-2xs text-content-muted">13 weeks</span>
+                <span className="text-2xs text-content-muted">{TREND_LABELS[trendPeriod]}</span>
               </div>
-              {c.quarter_closes && c.quarter_closes.length >= 2 && (
+              {trendCloses && trendCloses.length >= 2 && (
                 <div className="bg-surface-0 rounded-lg p-3 border border-line">
                   <Sparkline
-                    data={c.quarter_closes}
+                    data={trendCloses}
                     positive={isUp}
                     width={340}
                     height={80}

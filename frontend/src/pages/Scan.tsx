@@ -178,16 +178,16 @@ export function Scan() {
                     Ticker
                   </th>
                   <th className="text-right px-4 py-2 text-2xs font-medium uppercase tracking-wider text-content-muted">
-                    Current Selling
+                    Composite
                   </th>
                   <th className="text-right px-4 py-2 text-2xs font-medium uppercase tracking-wider text-content-muted">
-                    Baseline Mean
+                    Vol Z
                   </th>
                   <th className="text-right px-4 py-2 text-2xs font-medium uppercase tracking-wider text-content-muted">
-                    Baseline Std
+                    Breadth Z
                   </th>
                   <th className="text-right px-4 py-2 text-2xs font-medium uppercase tracking-wider text-content-muted">
-                    Z-Score
+                    Insiders
                   </th>
                   <th className="text-center px-4 py-2 text-2xs font-medium uppercase tracking-wider text-content-muted">
                     Status
@@ -203,23 +203,23 @@ export function Scan() {
                     <td className="px-4 py-2.5 font-medium text-accent-hover">
                       {s.ticker}
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
-                      {Math.round(s.current_shares_sold).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
-                      {s.baseline_mean.toFixed(1)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
-                      {s.baseline_std.toFixed(1)}
-                    </td>
                     <td className="px-4 py-2.5 text-right tabular-nums font-medium">
                       <span
                         className={cn(
-                          s.z_score >= 2 ? "text-negative" : "text-content"
+                          s.composite_score >= 2 ? "text-negative" : "text-content"
                         )}
                       >
-                        {s.z_score.toFixed(2)}
+                        {s.composite_score.toFixed(2)}
                       </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
+                      {s.volume_z_score.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
+                      {s.breadth_z_score.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-content-secondary">
+                      {s.unique_insiders}
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       {s.is_anomaly ? (

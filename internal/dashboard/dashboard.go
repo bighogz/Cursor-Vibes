@@ -168,7 +168,7 @@ func Build(opts BuildOpts) *Result {
 					hist = yahooClient.GetHistoricalRange(sym, qStartStr, qEndStr)
 				}
 			}
-			td := quarterTrendData(hist)
+			td := computeAllTrends(hist)
 
 			var news []map[string]interface{}
 			if useYahooForQuotes {
@@ -254,9 +254,13 @@ func Build(opts BuildOpts) *Result {
 		}
 		var qTrend *float64
 		var qCloses []float64
-		if td := histBySym[sym]; td != nil {
-			qTrend = &td.Pct
-			qCloses = td.Closes
+		var trends map[string]*models.TrendPeriod
+		if td := histBySym[sym]; td != nil && td.Periods != nil {
+			if q := td.Periods["quarterly"]; q != nil {
+				qTrend = &q.Pct
+				qCloses = q.Closes
+			}
+			trends = td.Periods
 		}
 
 		newsItems := make([]models.NewsItem, 0, len(newsBySym[sym]))
@@ -274,6 +278,7 @@ func Build(opts BuildOpts) *Result {
 			ChangePct:     chgPtr,
 			QuarterTrend:  qTrend,
 			QuarterCloses: qCloses,
+			Trends:        trends,
 			News:          newsItems,
 			TopInsiders:   topInsiders[sym],
 			Sources:       map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
@@ -312,13 +317,13 @@ func Build(opts BuildOpts) *Result {
 }
 
 type trendDataResult struct {
-	Pct    float64
-	Closes []float64
+	Periods map[string]*models.TrendPeriod
 }
 
-// quarterTrendData computes the quarter return and samples ~13 weekly closes for sparklines.
-// Prefers Rust binary when available; falls back to Go trend package.
-func quarterTrendData(hist []map[string]interface{}) *trendDataResult {
+// computeAllTrends produces daily/weekly/monthly/quarterly trends from a
+// single set of daily closes (fetched over ~92 calendar days). Each period
+// has a return percentage and a sparkline-appropriate slice of closes.
+func computeAllTrends(hist []map[string]interface{}) *trendDataResult {
 	if len(hist) < 2 {
 		return nil
 	}
@@ -332,26 +337,74 @@ func quarterTrendData(hist []map[string]interface{}) *trendDataResult {
 			closes = append(closes, c)
 		}
 	}
+	if len(closes) < 2 {
+		return nil
+	}
 
-	var pct float64
-	computed := false
+	periods := make(map[string]*models.TrendPeriod, 4)
 
+	// Helper: compute return from N trading days ago (clamped to available data).
+	pctFrom := func(lookback int) float64 {
+		idx := len(closes) - lookback
+		if idx < 0 {
+			idx = 0
+		}
+		if closes[idx] <= 0 {
+			return 0
+		}
+		return (closes[len(closes)-1]/closes[idx] - 1) * 100
+	}
+
+	// 1D: previous close → last close; sparkline = last 5 trading days
+	periods["daily"] = &models.TrendPeriod{
+		Pct:    pctFrom(2),
+		Closes: tail(closes, 5),
+	}
+
+	// 1W: ~5 trading days return; sparkline = last 5 trading days
+	periods["weekly"] = &models.TrendPeriod{
+		Pct:    pctFrom(5),
+		Closes: tail(closes, 5),
+	}
+
+	// 1M: ~22 trading days return; sparkline = last 22 trading days
+	periods["monthly"] = &models.TrendPeriod{
+		Pct:    pctFrom(22),
+		Closes: tail(closes, 22),
+	}
+
+	// 3M: ~63 trading days; sparkline = weekly-sampled closes.
+	// Prefer Rust binary for quarterly pct when available.
+	var qPct float64
+	qComputed := false
 	if rustclient.Available() {
 		if rt, err := rustclient.ComputeTrend(closes); err == nil && rt != nil {
-			pct = rt.QuarterPct
-			computed = true
+			qPct = rt.QuarterPct
+			qComputed = true
 		}
 	}
-	if !computed {
+	if !qComputed {
 		qt := trend.FromCloses(closes)
-		if qt == nil {
-			return nil
+		if qt != nil {
+			qPct = qt.QuarterPct
+		} else {
+			qPct = pctFrom(63)
 		}
-		pct = qt.QuarterPct
+	}
+	periods["quarterly"] = &models.TrendPeriod{
+		Pct:    qPct,
+		Closes: sampleWeekly(closes),
 	}
 
-	weekly := sampleWeekly(closes)
-	return &trendDataResult{Pct: pct, Closes: weekly}
+	return &trendDataResult{Periods: periods}
+}
+
+// tail returns the last n elements of a slice (or the whole slice if shorter).
+func tail(s []float64, n int) []float64 {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 func sampleWeekly(closes []float64) []float64 {

@@ -4,7 +4,7 @@ import { DataTable } from "../components/DataTable";
 import { IconRefresh } from "../components/icons";
 
 export function Dashboard() {
-  const { data, loading, error, selectedStock, onSelectStock, onRefresh } =
+  const { data, loading, error, selectedStock, trendPeriod, onSelectStock, onRefresh } =
     useOutletContext<DashboardOutletContext>();
 
   return (
@@ -43,6 +43,7 @@ export function Dashboard() {
           selectedStock={selectedStock}
           onSelectStock={onSelectStock}
           loading={loading}
+          trendPeriod={trendPeriod}
         />
       </div>
     </div>

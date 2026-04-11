@@ -8,6 +8,7 @@ import {
   IconChevronDown,
   IconCommand,
 } from "./icons";
+import type { TrendKey } from "../types/dashboard";
 
 interface NavItem {
   to: string;
@@ -20,10 +21,19 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/scan", label: "Anomaly Scan", icon: <IconAlert size={16} /> },
 ];
 
+const TREND_OPTIONS: { key: TrendKey; label: string }[] = [
+  { key: "daily", label: "1D" },
+  { key: "weekly", label: "1W" },
+  { key: "monthly", label: "1M" },
+  { key: "quarterly", label: "3M" },
+];
+
 interface Props {
   sectors: string[];
   activeSector: string;
   onSectorChange: (s: string) => void;
+  activeTrend: TrendKey;
+  onTrendChange: (t: TrendKey) => void;
   onOpenCommandPalette: () => void;
 }
 
@@ -31,6 +41,8 @@ export function SidebarNav({
   sectors,
   activeSector,
   onSectorChange,
+  activeTrend,
+  onTrendChange,
   onOpenCommandPalette,
 }: Props) {
   const [sectorsOpen, setSectorsOpen] = useState(true);
@@ -85,6 +97,31 @@ export function SidebarNav({
             </NavLink>
           ))}
         </div>
+
+        {/* Trend period (only on dashboard) */}
+        {isDashboard && (
+          <div className="mt-5">
+            <span className="flex items-center gap-1 px-2.5 w-full text-2xs font-medium uppercase tracking-wider text-content-muted">
+              Trend
+            </span>
+            <div className="mt-1 flex gap-1 px-2.5">
+              {TREND_OPTIONS.map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => onTrendChange(opt.key)}
+                  className={cn(
+                    "flex-1 py-1 rounded-md text-xs font-medium text-center transition-colors",
+                    activeTrend === opt.key
+                      ? "bg-accent-dim text-accent-hover"
+                      : "text-content-muted hover:text-content hover:bg-surface-2"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Sector filter (only on dashboard) */}
         {isDashboard && sectors.length > 0 && (

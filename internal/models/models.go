@@ -35,22 +35,29 @@ type SectorGroup struct {
 	Companies []Company `json:"companies"`
 }
 
+// TrendPeriod holds a return percentage and sparkline closes for one time horizon.
+type TrendPeriod struct {
+	Pct    float64   `json:"pct"`
+	Closes []float64 `json:"closes"`
+}
+
 // Company is a single S&P 500 constituent with all enriched data.
 type Company struct {
-	Symbol            string            `json:"symbol"`
-	Name              string            `json:"name"`
-	Price             *float64          `json:"price"`
-	ChangePct         *float64          `json:"change_pct"`
-	QuarterTrend      *float64          `json:"quarter_trend"`
-	QuarterCloses     []float64         `json:"quarter_closes"`
-	News              []NewsItem        `json:"news"`
-	TopInsiders       []InsiderEntry    `json:"top_insiders"`
-	Sources           map[string]string `json:"sources"`
-	AnomalyScore      *float64          `json:"anomaly_score,omitempty"`
-	VolumeZScore      *float64          `json:"volume_z_score,omitempty"`
-	BreadthZScore     *float64          `json:"breadth_z_score,omitempty"`
-	AccelerationScore *float64          `json:"acceleration_score,omitempty"`
-	UniqueInsiders    *int              `json:"unique_insiders,omitempty"`
+	Symbol            string                  `json:"symbol"`
+	Name              string                  `json:"name"`
+	Price             *float64                `json:"price"`
+	ChangePct         *float64                `json:"change_pct"`
+	QuarterTrend      *float64                `json:"quarter_trend"`
+	QuarterCloses     []float64               `json:"quarter_closes"`
+	Trends            map[string]*TrendPeriod `json:"trends,omitempty"`
+	News              []NewsItem              `json:"news"`
+	TopInsiders       []InsiderEntry          `json:"top_insiders"`
+	Sources           map[string]string       `json:"sources"`
+	AnomalyScore      *float64                `json:"anomaly_score,omitempty"`
+	VolumeZScore      *float64                `json:"volume_z_score,omitempty"`
+	BreadthZScore     *float64                `json:"breadth_z_score,omitempty"`
+	AccelerationScore *float64                `json:"acceleration_score,omitempty"`
+	UniqueInsiders    *int                    `json:"unique_insiders,omitempty"`
 }
 
 // NewsItem is a headline with URL.

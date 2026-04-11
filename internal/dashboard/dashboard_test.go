@@ -7,33 +7,31 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/models"
 )
 
-// quarterTrendData previously panicked on nil/empty input before we added
+// computeAllTrends previously panicked on nil/empty input before we added
 // the len(hist) < 2 guard. These tests ensure the guard stays.
 
-func TestQuarterTrendData_Nil(t *testing.T) {
-	if quarterTrendData(nil) != nil {
+func TestComputeAllTrends_Nil(t *testing.T) {
+	if computeAllTrends(nil) != nil {
 		t.Error("nil input should return nil")
 	}
 }
 
-func TestQuarterTrendData_Empty(t *testing.T) {
-	if quarterTrendData([]map[string]interface{}{}) != nil {
+func TestComputeAllTrends_Empty(t *testing.T) {
+	if computeAllTrends([]map[string]interface{}{}) != nil {
 		t.Error("empty input should return nil")
 	}
 }
 
-func TestQuarterTrendData_SinglePoint(t *testing.T) {
+func TestComputeAllTrends_SinglePoint(t *testing.T) {
 	hist := []map[string]interface{}{
 		{"date": "2026-01-01", "close": 100.0},
 	}
-	if quarterTrendData(hist) != nil {
+	if computeAllTrends(hist) != nil {
 		t.Error("single data point is insufficient for trend — should return nil")
 	}
 }
 
-func TestQuarterTrendData_ValidSeries(t *testing.T) {
-	// trend.FromCloses requires >= 30 valid points. Generate a 60-day series
-	// with a clear upward trend (100 → 160).
+func TestComputeAllTrends_ValidSeries(t *testing.T) {
 	hist := make([]map[string]interface{}, 60)
 	for i := range hist {
 		hist[i] = map[string]interface{}{
@@ -41,23 +39,32 @@ func TestQuarterTrendData_ValidSeries(t *testing.T) {
 			"close": 100.0 + float64(i),
 		}
 	}
-	td := quarterTrendData(hist)
+	td := computeAllTrends(hist)
 	if td == nil {
-		t.Fatal("60 valid points should compute a trend")
+		t.Fatal("60 valid points should compute trends")
 	}
-	if td.Pct <= 0 {
-		t.Errorf("trend should be positive for upward series, got %v", td.Pct)
+	for _, key := range []string{"daily", "weekly", "monthly", "quarterly"} {
+		p := td.Periods[key]
+		if p == nil {
+			t.Errorf("missing %s trend period", key)
+			continue
+		}
+		if p.Pct <= 0 {
+			t.Errorf("%s trend should be positive for upward series, got %v", key, p.Pct)
+		}
+		if len(p.Closes) < 2 {
+			t.Errorf("%s sparkline should have >= 2 closes, got %d", key, len(p.Closes))
+		}
 	}
 }
 
-func TestQuarterTrendData_ZeroCloses_Filtered(t *testing.T) {
+func TestComputeAllTrends_ZeroCloses_Filtered(t *testing.T) {
 	hist := []map[string]interface{}{
 		{"date": "2026-01-01", "close": 0.0},
 		{"date": "2026-02-01", "close": 0.0},
 		{"date": "2026-03-01", "close": 100.0},
 	}
-	// Zero closes are filtered out. After filtering: only 1 point → nil.
-	td := quarterTrendData(hist)
+	td := computeAllTrends(hist)
 	if td != nil {
 		t.Error("all-zero closes except one should return nil (insufficient data)")
 	}

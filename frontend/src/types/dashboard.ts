@@ -1,3 +1,10 @@
+export type TrendKey = "daily" | "weekly" | "monthly" | "quarterly";
+
+export interface TrendPeriod {
+  pct: number;
+  closes: number[];
+}
+
 export interface Company {
   symbol: string;
   name: string;
@@ -5,9 +12,15 @@ export interface Company {
   change_pct: number | null;
   quarter_trend: number | null;
   quarter_closes: number[] | null;
+  trends?: Partial<Record<TrendKey, TrendPeriod>> | null;
   news: NewsItem[] | null;
   top_insiders: Insider[] | null;
   sources: Record<string, string>;
+  anomaly_score?: number | null;
+  volume_z_score?: number | null;
+  breadth_z_score?: number | null;
+  acceleration_score?: number | null;
+  unique_insiders?: number | null;
 }
 
 export interface NewsItem {
@@ -46,11 +59,16 @@ export interface AnomalyExplanation {
 
 export interface ScanSignal {
   ticker: string;
+  composite_score: number;
+  volume_z_score: number;
+  breadth_z_score: number;
+  acceleration_score: number;
+  is_anomaly: boolean;
+  current_dollar_vol: number;
   current_shares_sold: number;
+  unique_insiders: number;
   baseline_mean: number;
   baseline_std: number;
-  z_score: number;
-  is_anomaly: boolean;
 }
 
 export interface ScanResult {
