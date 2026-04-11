@@ -411,6 +411,7 @@ Architectural decisions are documented as ADRs in [docs/decisions/](docs/decisio
 | [0001](docs/decisions/0001-why-go-api.md) | Why Go for the API (not Python, not Node) |
 | [0002](docs/decisions/0002-why-rust-binary.md) | Why a Rust subprocess for anomaly detection |
 | [0003](docs/decisions/0003-threat-model-scope.md) | Threat model scope and security framework choices |
+| [0004](docs/decisions/0004-anomaly-detection-limitations.md) | Anomaly detection limitations and financial domain awareness |
 
 ---
 
