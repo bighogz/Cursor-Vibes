@@ -1,8 +1,7 @@
 # Ops Lite: How I'd Deploy This
 
-> **This application is not deployed.** This document describes how I *would*
-> think about running it if it were a real service. The goal is to demonstrate
-> operational reasoning, not operational infrastructure.
+> **Not deployed.** This document describes how the application *would* run
+> as a real service.
 
 ---
 
@@ -29,12 +28,12 @@ data/   (local filesystem — cache files, auto-created)
 
 ### Why this shape
 
-- **Single process.** Fewer moving parts = fewer failure modes. The Go binary handles
-  routing, middleware, API logic, static file serving, and subprocess management.
+- **Single process.** Fewer moving parts, fewer failure modes. The Go binary handles
+  routing, middleware, API logic, static files, and subprocess management.
 - **Reverse proxy in front.** TLS termination and edge-level rate limiting belong
-  outside the application. The app trusts `X-Forwarded-For` from the proxy.
-- **Local filesystem for cache.** Appropriate for single-node. If horizontal scaling
-  were needed, I'd move the cache to Redis or S3 — but that's not the current scale.
+  outside the application.
+- **Local filesystem for cache.** Appropriate for single-node. Horizontal scaling
+  would move the cache to Redis or S3.
 
 ---
 
@@ -46,7 +45,7 @@ data/   (local filesystem — cache files, auto-created)
 | **Platform secret store** (AWS SSM, GCP Secret Manager) | Cloud deployment | Secrets injected into environment at boot. Rotation supported. |
 | **`.env` file** | Quick local testing only | Plaintext on disk. Gitignored, but a risk if the machine is compromised. |
 
-I would **not** bake secrets into Docker images, CI artifacts, or config files checked into git.
+Secrets never belong in Docker images, CI artifacts, or version-controlled config.
 
 ---
 
@@ -67,28 +66,25 @@ Load balancer → GET /api/health → {"status":"ok","version":"1.0.0","commit":
                                    ↑ returns version + commit for deploy verification
 ```
 
-I'd configure the load balancer to remove the instance from rotation if `/api/health`
-returns non-200 for 3 consecutive checks (30 s interval).
+The load balancer removes the instance from rotation after 3 consecutive non-200 checks
+(30 s interval).
 
 ---
 
 ## What I'd do for high availability
 
-Not needed at current scale, but here's how I'd think about it:
+Not needed at current scale, but straightforward to add:
 
-1. **Stateless API.** The Go binary is already stateless — all mutable state is
-   in the file cache. Move the cache to a shared store (Redis) and you can run
-   N instances behind a load balancer.
+1. **Stateless API.** All mutable state lives in the file cache. Move the cache to
+   Redis and run N instances behind a load balancer.
 
-2. **Cache warming.** On deploy, the new instance's first request triggers a
-   cold cache build (~30 s). I'd add a readiness probe that waits for the
-   cache to populate before accepting traffic.
+2. **Cache warming.** A readiness probe waits for the cache to populate before
+   accepting traffic (~30 s cold build).
 
-3. **Blue-green deploys.** Single binary makes this trivial: build, verify health,
-   swap traffic. Rollback = point back to the old binary.
+3. **Blue-green deploys.** Build, verify health, swap traffic. Rollback = point back
+   to the old binary.
 
-4. **No database migrations.** The app has no database. Deploy is "copy binary + restart."
-   This eliminates an entire class of deployment risk.
+4. **No database migrations.** Deploy is "copy binary + restart."
 
 ---
 
@@ -100,8 +96,7 @@ Not needed at current scale, but here's how I'd think about it:
 | Cache files | Ephemeral — rebuilt on startup | N/A | ~30 s (cache rebuild) |
 | API keys | 1Password vault | N/A (managed externally) | Minutes (re-inject) |
 
-There's no user data to back up. The cache is derived from public financial APIs
-and can be reconstructed at any time. This dramatically simplifies DR.
+No user data to back up. The cache derives from public APIs and rebuilds on demand.
 
 ---
 
@@ -114,18 +109,15 @@ and can be reconstructed at any time. This dramatically simplifies DR.
 | FMP API (free tier) | 250 calls/day | $0 |
 | Total | | **~$12/month** |
 
-The app is CPU-light (most time is spent waiting on upstream HTTP responses)
-and memory-light (~50 MB RSS). A $12 VPS would be more than sufficient.
+The app is CPU-light (mostly waiting on upstream HTTP) and memory-light (~50 MB RSS).
+A $12 VPS suffices.
 
 ---
 
 ## Why I'm not deploying it
 
-1. **Cost vs. signal.** Paying $12/month to host a portfolio project doesn't prove
-   anything that `make demo` doesn't already prove.
+1. **Cost vs. signal.** `make demo` proves everything a live deployment would.
 2. **Maintenance burden.** A deployed service needs uptime monitoring, certificate
-   renewal, dependency updates, and incident response. For a portfolio artifact,
-   the code *is* the deliverable.
-3. **Data freshness.** The free-tier API limits mean the data would be stale
-   within hours. A live demo with stale data is worse than a local demo with
-   fresh data.
+   renewal, dependency updates, and incident response. The code is the deliverable.
+3. **Data freshness.** Free-tier API limits leave the data stale within hours. A local
+   demo with fresh data beats a live demo with stale data.

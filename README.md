@@ -9,33 +9,22 @@ Built with **Go**, **Rust**, a **React** frontend, and a **Python** AI sidecar.
 
 ---
 
-## How I Think About This
+## Design Principles
 
-This repo is designed to communicate engineering judgment, not just working code.
-A few principles that shaped every decision:
+- **Fast feedback.** `make demo` builds, starts, samples, and writes output — one command,
+  under a minute.
+- **Security from the start.** Input validation, auth, logging, and dependency scanning
+  ship with the first commit, not after.
+- **Graceful degradation.** Rust wasm module missing? Subprocess fallback. Native binary
+  missing? Go fallback. FMP rate-limited? Yahoo takes over. Cache stale? Rebuild on demand.
 
-- **Tight feedback loops.** `make demo` builds everything, starts the server, runs a
-  sample request, and writes output artifacts — in one command. If it breaks, you know
-  in under a minute.
-- **Treat security as requirements, not polish.** Input validation, auth, logging, and
-  dependency scanning are implemented from the start, not bolted on. They're tested the
-  same way features are tested.
-- **Evidence over claims.** Every security control has a file path and a test.
-  Every architectural choice has a written rationale. "I thought about it" is backed
-  by artifacts, not hand-waving.
-- **Graceful degradation everywhere.** Rust wasm module missing? Subprocess fallback.
-  Native binary missing? Go fallback runs. FMP API rate-limited? Yahoo takes over.
-  Cache stale? Rebuild on demand. No single failure should break the whole system.
+### Reading order
 
-### Guided tour (2–3 minutes)
-
-If you're reviewing this repo, read in this order:
-
-1. **This README** — mental model, architecture, quick start
-2. **[docs/design.md](docs/design.md)** — tradeoffs, constraints, non-goals, what I'd change
-3. **[docs/security/](docs/security/)** — threat model, controls matrix, secure defaults
-4. **[docs/ops-lite.md](docs/ops-lite.md)** — how I'd deploy this (explicitly: not deployed)
-5. **[docs/decisions/](docs/decisions/)** — ADRs: why Go, why Rust, why these frameworks
+1. **This README** — architecture, quick start
+2. **[docs/design.md](docs/design.md)** — tradeoffs, constraints, non-goals
+3. **[docs/security/](docs/security/)** — threat model, controls matrix
+4. **[docs/ops-lite.md](docs/ops-lite.md)** — deployment reasoning
+5. **[docs/decisions/](docs/decisions/)** — ADRs: why Go, why Rust
 
 ---
 
@@ -150,13 +139,10 @@ cd frontend && npm run dev    # http://localhost:5173
 | **Financial Datasets** | Form 4 insider trades | Optional — `FINANCIAL_DATASETS_API_KEY` |
 | **EODHD** | Insider transactions (requires All-In-One plan) | Optional — `EODHD_API_KEY` |
 
-**No paid API keys are required for insider data.** SEC EDGAR direct queries (free, no API key)
-backfill all S&P 500 companies by fetching Form 4 filings directly from the SEC. On a fresh build
-this typically yields 200+ companies with insider sell records. Coverage grows across builds via
-the unified disk cache (`data/insider_unified_cache.json`).
-
-Paid keys (`FMP_API_KEY`, `SEC_API_KEY`, `EODHD_API_KEY`) increase coverage and freshness but
-are not required. Yahoo Finance handles prices, trends, and news with no API key.
+**No paid keys are required for insider data.** SEC EDGAR queries fetch Form 4 filings directly
+from the SEC, covering 200+ companies on a fresh build. Coverage grows across builds via the
+unified disk cache. Paid keys increase freshness but are optional. Yahoo Finance handles
+prices, trends, and news without a key.
 
 ---
 
@@ -286,8 +272,8 @@ Otherwise, the identical algorithm runs in Go (`internal/aggregator`).
 
 ## AI Anomaly Explanation
 
-When you click "Explain Anomaly" in the detail drawer, the system produces a structured,
-non-speculative explanation of the insider activity for that company. The full chain:
+Clicking "Explain Anomaly" in the detail drawer produces a structured, non-speculative
+explanation of insider activity for that company:
 
 ```
 React → GET /api/ai/explain-anomaly?ticker=AAPL (Go :8000)
@@ -299,25 +285,18 @@ React → GET /api/ai/explain-anomaly?ticker=AAPL (Go :8000)
 
 **Why this shape:**
 
-- **Go assembles the payload.** The handler pulls everything from the in-memory dashboard
-  store — company name, sector, quarterly trend, insider events, data sources. Zero live API
-  calls, so the Go side responds in microseconds; the latency is pure LLM inference.
+- **Go assembles the payload** from the in-memory dashboard store — company name, sector,
+  quarterly trend, insider events, data sources. Zero live API calls; latency is pure LLM inference.
 - **Python owns the LLM interaction.** FastAPI + LangChain + Pydantic handle prompt
-  templating, model configuration, and response validation. Go doesn't import any AI
-  libraries.
-- **React only talks to Go.** The frontend has no knowledge of the Python service. The Go
-  endpoint is the single API surface.
+  templating, model configuration, and response validation.
+- **React only talks to Go.** The frontend has no knowledge of the Python service.
 - **Everything runs locally.** Ollama serves qwen3.5 on-device. No data leaves the machine.
-  No API keys, no cloud LLM costs.
-- **Observable via LangSmith.** Set `LANGSMITH_API_KEY` + `LANGSMITH_TRACING=true` and every
-  LLM call is traced — full prompt, raw model output, latency, token counts. LangChain's
-  built-in integration handles this automatically; no code changes needed.
+- **Observable via LangSmith.** Set `LANGSMITH_API_KEY` + `LANGSMITH_TRACING=true` to trace
+  every LLM call — full prompt, raw output, latency, token counts.
 
-**What the model is told not to do:**
-
-The system prompt explicitly forbids speculation about illegality, insider intent, future
-stock performance, and investment advice. If context is limited, it says so. The response
-is grounded in the structured data the Go backend provides — nothing more.
+**Guardrails:** The system prompt forbids speculation about illegality, insider intent,
+future stock performance, and investment advice. Responses cite only the structured data
+the Go backend provides.
 
 **Running the AI service:**
 
@@ -362,23 +341,20 @@ and insider table. Selection is preserved in the URL (`?stock=AAPL`).
 
 ## Security
 
-These checks run in CI to demonstrate my default hygiene — SAST, dependency vulnerability
-scanning, secret scanning, SBOM generation. They're habits I apply to every project,
-not compliance theater for a portfolio repo.
+SAST, dependency scanning, secret scanning, and SBOM generation run in CI on every push.
+See [docs/decisions/0003-threat-model-scope.md](docs/decisions/0003-threat-model-scope.md) for the reasoning.
 
-For the full reasoning, see [docs/decisions/0003-threat-model-scope.md](docs/decisions/0003-threat-model-scope.md).
+### Controls
 
-### What's implemented (and why)
-
-| Category | What | Why it matters even here |
-|---|---|---|
-| **Input validation** | GICS enum check, numeric bounds, path traversal guard | Prevents bugs and demonstrates defense-in-depth thinking |
-| **Auth** | `ADMIN_API_KEY` via `crypto/subtle.ConstantTimeCompare` | Shows I know timing attacks exist and how to prevent them |
-| **Structured errors** | JSON error responses, no stack traces | Production habit — never leak internals |
-| **Security headers** | CSP, X-Frame-Options, X-Content-Type-Options | Applied via middleware, costs nothing |
-| **Audit logging** | Unique `X-Request-Id`, method/path/status/duration per request | Observable by default |
-| **Rate limiting** | Per-IP scan throttle, refresh debounce | Prevents accidental self-DDoS during development |
-| **Secrets management** | 1Password CLI integration, `.env` gitignored | API keys have real financial cost if leaked |
+| Category | What |
+|---|---|
+| **Input validation** | GICS enum check, numeric bounds, path traversal guard |
+| **Auth** | `ADMIN_API_KEY` via `crypto/subtle.ConstantTimeCompare` |
+| **Structured errors** | JSON error responses, no stack traces |
+| **Security headers** | CSP, X-Frame-Options, X-Content-Type-Options via middleware |
+| **Audit logging** | Unique `X-Request-Id`, method/path/status/duration per request |
+| **Rate limiting** | Per-IP scan throttle, refresh debounce |
+| **Secrets management** | 1Password CLI integration, `.env` gitignored |
 
 ### CI pipelines
 
@@ -507,6 +483,5 @@ make clean          # Remove bin/, rust-core/target/, frontend/dist/, out/
 
 ## Disclaimer
 
-This is for **research and education only**. It is not investment advice.
-Insider selling can have many benign explanations (e.g., 10b5-1 plans, diversification).
-Always do your own due diligence.
+For research and education only — not investment advice. Insider selling often has
+benign explanations (10b5-1 plans, diversification). Do your own due diligence.
