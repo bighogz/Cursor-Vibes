@@ -113,11 +113,8 @@ func Build(opts BuildOpts) *Result {
 	for i, c := range allCompanies {
 		allTickers[i] = c.Symbol
 	}
-	var insiderRecords []models.InsiderSellRecord
-	if config.FMPAPIKey != "" || config.EODHDAPIKey != "" || config.SECAPIKey != "" {
-		insiderRecords = aggregator.AggregateInsiderSells(allTickers, insiderFrom, dateTo)
-		log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
-	}
+	insiderRecords := aggregator.AggregateInsiderSells(allTickers, insiderFrom, dateTo)
+	log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
 	topInsiders := topInsidersByTicker(insiderRecords)
 
 	qStart := asOf.AddDate(0, 0, -92)
@@ -226,15 +223,14 @@ func Build(opts BuildOpts) *Result {
 			for _, ins := range insiders {
 				srcSet[ins.Source] = true
 			}
-			switch {
-			case srcSet["fmp"] && srcSet["eodhd"]:
-				insiderSrc = "fmp+eodhd"
-			case srcSet["sec"]:
-				insiderSrc = "sec"
-			case srcSet["eodhd"]:
-				insiderSrc = "eodhd"
-			default:
-				insiderSrc = "fmp"
+			var parts []string
+			for _, s := range []string{"fmp", "eodhd", "sec", "edgar"} {
+				if srcSet[s] {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				insiderSrc = strings.Join(parts, "+")
 			}
 		}
 		var qTrend *float64

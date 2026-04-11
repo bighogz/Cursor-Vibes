@@ -74,7 +74,7 @@ func main() {
 		Addr:              ":" + port,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      120 * time.Second,
+		WriteTimeout:      240 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	log.Printf("listening on :%s", port)
