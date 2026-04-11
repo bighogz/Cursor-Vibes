@@ -150,10 +150,13 @@ cd frontend && npm run dev    # http://localhost:5173
 | **Financial Datasets** | Form 4 insider trades | Optional — `FINANCIAL_DATASETS_API_KEY` |
 | **EODHD** | Insider transactions (requires All-In-One plan) | Optional — `EODHD_API_KEY` |
 
-At minimum, `FMP_API_KEY` is required for the S&P 500 constituent list.
-`SEC_API_KEY` is recommended for high insider sell coverage — it queries up to 400 Form 4 XMLs per build, prioritizing companies not yet covered.
-SEC EDGAR direct queries (free, no key) backfill companies that SEC-API.io missed. Coverage grows across builds via the unified cache.
-Yahoo Finance handles prices, trends, and news with no API key.
+**No paid API keys are required for insider data.** SEC EDGAR direct queries (free, no API key)
+backfill all S&P 500 companies by fetching Form 4 filings directly from the SEC. On a fresh build
+this typically yields 200+ companies with insider sell records. Coverage grows across builds via
+the unified disk cache (`data/insider_unified_cache.json`).
+
+Paid keys (`FMP_API_KEY`, `SEC_API_KEY`, `EODHD_API_KEY`) increase coverage and freshness but
+are not required. Yahoo Finance handles prices, trends, and news with no API key.
 
 ---
 
@@ -203,6 +206,26 @@ Yahoo Finance handles prices, trends, and news with no API key.
    OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
    ```
 
+7. **LangSmith observability** (optional — traces every LLM call):
+
+   ```bash
+   export LANGSMITH_API_KEY="lsv2_pt_..."   # from https://smith.langchain.com/settings
+   export LANGSMITH_TRACING=true
+   export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+   export LANGSMITH_PROJECT=cursor-vibes
+   export OLLAMA_MODEL=qwen3.5
+   ai/.venv/bin/uvicorn ai.app:app --port 8001
+   ```
+
+   Or with 1Password (no plaintext key on disk):
+
+   ```bash
+   export LANGSMITH_API_KEY="$(op read 'op://VAULT_ID/ITEM_ID/credential')"
+   # ... remaining exports same as above
+   ```
+
+   Verify with: `ai/.venv/bin/python3 ai/test_trace.py`
+
 ---
 
 ## Configuration
@@ -218,6 +241,9 @@ Yahoo Finance handles prices, trends, and news with no API key.
 | `EODHD_API_KEY` | *(optional)* | EODHD API key |
 | `AI_SERVICE_URL` | `http://localhost:8001` | Python AI sidecar URL |
 | `OLLAMA_MODEL` | `qwen3.5` | Ollama model for anomaly explanations (sidecar-side) |
+| `LANGSMITH_API_KEY` | *(optional)* | LangSmith API key for LLM tracing (`lsv2_pt_...`) |
+| `LANGSMITH_TRACING` | `false` | Set `true` to enable LangSmith trace export |
+| `LANGSMITH_PROJECT` | `cursor-vibes` | LangSmith project name for trace grouping |
 | `PORT` | `8000` | HTTP listen port |
 
 See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the full security-impact analysis of every setting.
@@ -283,6 +309,9 @@ React → GET /api/ai/explain-anomaly?ticker=AAPL (Go :8000)
   endpoint is the single API surface.
 - **Everything runs locally.** Ollama serves qwen3.5 on-device. No data leaves the machine.
   No API keys, no cloud LLM costs.
+- **Observable via LangSmith.** Set `LANGSMITH_API_KEY` + `LANGSMITH_TRACING=true` and every
+  LLM call is traced — full prompt, raw model output, latency, token counts. LangChain's
+  built-in integration handles this automatically; no code changes needed.
 
 **What the model is told not to do:**
 
@@ -299,6 +328,16 @@ OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
 
 # Terminal 2 — Go API (sidecar URL defaults to http://localhost:8001)
 ./bin/api
+```
+
+**With LangSmith tracing** (export env vars before starting the sidecar):
+
+```bash
+export LANGSMITH_API_KEY="lsv2_pt_..."
+export LANGSMITH_TRACING=true
+export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+export LANGSMITH_PROJECT=cursor-vibes
+OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
 ```
 
 The AI sidecar is optional. If it's not running, the "Explain Anomaly" button returns a
@@ -392,6 +431,7 @@ ai/
   app.py                 FastAPI service: POST /explain-anomaly
   chains.py              LangChain prompt + Ollama chain (qwen3.5)
   schemas.py             Pydantic models: AnomalyInput, AnomalyExplanation
+  test_trace.py          LangSmith tracing diagnostic
   requirements.txt       Pinned Python dependencies
 docs/
   design.md              Tradeoffs, constraints, non-goals
@@ -407,6 +447,7 @@ frontend/                React + TypeScript + Tailwind SPA
 cmd/api/                 Go HTTP server (dashboard, health, scan, AI proxy)
 cmd/scan/                Go CLI (anomaly scanner)
 internal/
+  aiclient/              Go client for the Python AI sidecar
   aggregator/            Z-score anomaly detection (Go fallback)
   cache/                 File-based JSON cache
   config/                Environment loading (sync.Once)
