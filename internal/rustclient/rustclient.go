@@ -26,11 +26,16 @@ import (
 // AnomalySignal matches Rust output.
 type AnomalySignal struct {
 	Ticker            string  `json:"ticker"`
+	CompositeScore    float64 `json:"composite_score"`
+	VolumeZScore      float64 `json:"volume_z_score"`
+	BreadthZScore     float64 `json:"breadth_z_score"`
+	AccelerationScore float64 `json:"acceleration_score"`
+	IsAnomaly         bool    `json:"is_anomaly"`
+	CurrentDollarVol  float64 `json:"current_dollar_vol"`
 	CurrentSharesSold float64 `json:"current_shares_sold"`
+	UniqueInsiders    int     `json:"unique_insiders"`
 	BaselineMean      float64 `json:"baseline_mean"`
 	BaselineStd       float64 `json:"baseline_std"`
-	ZScore            float64 `json:"z_score"`
-	IsAnomaly         bool    `json:"is_anomaly"`
 }
 
 // TrendResult matches the Rust QuarterlyTrend struct.
@@ -244,7 +249,7 @@ type rustInput struct {
 		BaselineDays      int     `json:"baseline_days"`
 		CurrentDays       int     `json:"current_days"`
 		StdThreshold      float64 `json:"std_threshold"`
-		MinBaselinePoints int     `json:"min_baseline_points"`
+		MinBaselineWeeks int     `json:"min_baseline_weeks"`
 		AsOf              string  `json:"as_of"`
 	} `json:"params"`
 }
@@ -264,7 +269,7 @@ func ComputeAnomalySignals(
 	input.Params.BaselineDays = baselineDays
 	input.Params.CurrentDays = currentDays
 	input.Params.StdThreshold = stdThreshold
-	input.Params.MinBaselinePoints = config.MinBaselinePoints
+	input.Params.MinBaselineWeeks = config.MinBaselineWeeks
 	input.Params.AsOf = asOf
 
 	raw, err := run("anomaly", input)

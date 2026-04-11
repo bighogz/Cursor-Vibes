@@ -71,10 +71,13 @@ var (
 	SECAPIKey            string
 	FinancialDatasetsKey string
 
-	AnomalyStdThreshold = 2.0
-	BaselineDays        = 365
-	CurrentWindowDays   = 30
-	MinBaselinePoints   = 5
+	AnomalyStdThreshold    = 2.0
+	BaselineDays           = 730
+	CurrentWindowDays      = 30
+	MinBaselineWeeks       = 3
+	VolumeWeight           = 0.4
+	BreadthWeight          = 0.3
+	AccelerationWeight     = 0.3
 
 	FMPFreeTier  bool
 	AdminAPIKey  string

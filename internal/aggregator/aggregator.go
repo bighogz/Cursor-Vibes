@@ -19,10 +19,13 @@ import (
 	"github.com/bighogz/Cursor-Vibes/internal/secapi"
 )
 
-type dailyVolume struct {
-	ticker string
-	date   time.Time
-	shares float64
+type txRecord struct {
+	ticker     string
+	insider    string
+	date       time.Time
+	shares     float64
+	dollarVal  float64
+	hasDollar  bool
 }
 
 func AggregateInsiderSells(tickers []string, dateFrom, dateTo time.Time) []models.InsiderSellRecord {
@@ -193,121 +196,217 @@ func keyFor(r models.InsiderSellRecord) string {
 	return strings.ToUpper(r.Ticker) + "|" + r.TransactionDate.Format("2006-01-02") + "|" + ins + "|" + fmt.Sprintf("%.0f", r.SharesSold)
 }
 
+// AnomalySignal holds a composite anomaly score built from three sub-signals:
+// volume (dollar-normalized weekly z-score), breadth (unique insider count),
+// and acceleration (sell frequency ratio). The composite is a weighted sum.
 type AnomalySignal struct {
-	Ticker             string  `json:"ticker"`
-	CurrentSharesSold  float64 `json:"current_shares_sold"`
-	BaselineMean       float64 `json:"baseline_mean"`
-	BaselineStd        float64 `json:"baseline_std"`
-	ZScore             float64 `json:"z_score"`
-	IsAnomaly          bool    `json:"is_anomaly"`
-	BlackoutAdjusted   bool    `json:"blackout_adjusted,omitempty"`
+	Ticker            string  `json:"ticker"`
+	CompositeScore    float64 `json:"composite_score"`
+	VolumeZScore      float64 `json:"volume_z_score"`
+	BreadthZScore     float64 `json:"breadth_z_score"`
+	AccelerationScore float64 `json:"acceleration_score"`
+	IsAnomaly         bool    `json:"is_anomaly"`
+	CurrentDollarVol  float64 `json:"current_dollar_vol"`
+	CurrentSharesSold float64 `json:"current_shares_sold"`
+	UniqueInsiders    int     `json:"unique_insiders"`
+	BaselineMean      float64 `json:"baseline_mean"`
+	BaselineStd       float64 `json:"baseline_std"`
+	BlackoutAdjusted  bool    `json:"blackout_adjusted,omitempty"`
 }
 
-// earningsBlackoutMonths approximates the months when most S&P 500 companies
-// are in earnings blackout periods (insiders cannot trade). Q4 earnings are
-// reported Jan-Feb, Q1 in Apr-May, Q2 in Jul-Aug, Q3 in Oct-Nov. The ~2 week
-// quiet period before each means sell volume naturally drops in these months,
-// then spikes after. A naive Z-score would flag routine post-earnings selling.
-//
-// This is a heuristic — precise blackout windows vary per company and are
-// governed by each firm's insider trading policy. For a production system,
-// you'd ingest actual 10b5-1 plan data or company-specific blackout calendars.
 var earningsBlackoutMonths = map[time.Month]bool{
 	time.January: true, time.April: true,
 	time.July: true, time.October: true,
 }
 
+// isoWeek returns a "YYYY-WNN" key for weekly bucketing.
+func isoWeek(t time.Time) string {
+	y, w := t.ISOWeek()
+	return fmt.Sprintf("%d-W%02d", y, w)
+}
+
 func ComputeAnomalySignals(records []models.InsiderSellRecord, baselineDays, currentDays int, stdThreshold float64, asOf time.Time) []AnomalySignal {
-	daily := dailyVolumeByTicker(records)
-	if len(daily) == 0 {
+	txs := extractTxRecords(records)
+	if len(txs) == 0 {
 		return nil
 	}
+
 	baselineEnd := asOf.AddDate(0, 0, -currentDays)
 	baselineStart := baselineEnd.AddDate(0, 0, -baselineDays)
 	currentStart := asOf.AddDate(0, 0, -currentDays)
 
-	tickerDates := make(map[string]map[string]float64) // ticker -> date -> total shares
-	for _, d := range daily {
-		if tickerDates[d.ticker] == nil {
-			tickerDates[d.ticker] = make(map[string]float64)
-		}
-		dt := d.date.Format("2006-01-02")
-		tickerDates[d.ticker][dt] += d.shares
+	// Group transactions by ticker.
+	byTicker := make(map[string][]txRecord)
+	for _, tx := range txs {
+		byTicker[tx.ticker] = append(byTicker[tx.ticker], tx)
 	}
 
-	results := make([]AnomalySignal, 0)
-	for ticker, byDate := range tickerDates {
-		var baselineTotals []float64
-		var currentTotal float64
-		for dtStr, shares := range byDate {
-			dt, _ := time.Parse("2006-01-02", dtStr)
-			if !dt.Before(baselineStart) && dt.Before(baselineEnd) {
-				baselineTotals = append(baselineTotals, shares)
+	baselineWeeks := float64(baselineDays) / 7.0
+	if baselineWeeks < 1 {
+		baselineWeeks = 1
+	}
+	currentWeeks := float64(currentDays) / 7.0
+	if currentWeeks < 1 {
+		currentWeeks = 1
+	}
+
+	results := make([]AnomalySignal, 0, len(byTicker))
+	for ticker, txs := range byTicker {
+		// --- Partition into baseline and current windows ---
+		var baselineTxs, currentTxs []txRecord
+		for _, tx := range txs {
+			if !tx.date.Before(baselineStart) && tx.date.Before(baselineEnd) {
+				baselineTxs = append(baselineTxs, tx)
 			}
-			if !dt.Before(currentStart) && !dt.After(asOf) {
-				currentTotal += shares
+			if !tx.date.Before(currentStart) && !tx.date.After(asOf) {
+				currentTxs = append(currentTxs, tx)
 			}
 		}
-		sig := AnomalySignal{Ticker: ticker, CurrentSharesSold: currentTotal}
-		if len(baselineTotals) < config.MinBaselinePoints {
-			sig.IsAnomaly = false
+
+		// --- Weekly dollar volume buckets (baseline) ---
+		baselineWeeklyVol := make(map[string]float64)
+		baselineWeeklyInsiders := make(map[string]map[string]bool)
+		for _, tx := range baselineTxs {
+			wk := isoWeek(tx.date)
+			baselineWeeklyVol[wk] += tx.dollarVal
+			if baselineWeeklyInsiders[wk] == nil {
+				baselineWeeklyInsiders[wk] = make(map[string]bool)
+			}
+			baselineWeeklyInsiders[wk][tx.insider] = true
+		}
+
+		// --- Current window aggregates ---
+		var currentDollarVol, currentShares float64
+		currentInsiders := make(map[string]bool)
+		for _, tx := range currentTxs {
+			currentDollarVol += tx.dollarVal
+			currentShares += tx.shares
+			currentInsiders[tx.insider] = true
+		}
+
+		sig := AnomalySignal{
+			Ticker:            ticker,
+			CurrentDollarVol:  currentDollarVol,
+			CurrentSharesSold: currentShares,
+			UniqueInsiders:    len(currentInsiders),
+		}
+
+		// Need enough weekly data points to compute meaningful statistics.
+		if len(baselineWeeklyVol) < config.MinBaselineWeeks {
 			results = append(results, sig)
 			continue
 		}
-		meanB, stdB := meanStd(baselineTotals)
-		if stdB <= 0 {
-			stdB = 1e-9
-		}
-		numDays := asOf.Sub(currentStart).Hours()/24 + 1
-		if numDays < 1 {
-			numDays = 1
-		}
-		currentAvgDaily := currentTotal / numDays
-		z := (currentAvgDaily - meanB) / stdB
 
-		// Blackout period adjustment: if the current window falls right after
-		// an earnings blackout month, insiders cluster their (routine) sells
-		// in the open window. Dampen the z-score to avoid false positives on
-		// expected post-blackout activity.
+		// --- Sub-signal 1: Volume z-score (weekly dollar buckets) ---
+		weeklyVols := make([]float64, 0, len(baselineWeeklyVol))
+		for _, v := range baselineWeeklyVol {
+			weeklyVols = append(weeklyVols, v)
+		}
+		meanVol, stdVol := meanStd(weeklyVols)
+		if stdVol <= 0 {
+			stdVol = 1e-9
+		}
+		currentWeeklyAvg := currentDollarVol / currentWeeks
+		volumeZ := clampZ((currentWeeklyAvg - meanVol) / stdVol)
+
+		// --- Sub-signal 2: Breadth z-score (unique insiders per week) ---
+		weeklyBreadth := make([]float64, 0, len(baselineWeeklyInsiders))
+		for _, ins := range baselineWeeklyInsiders {
+			weeklyBreadth = append(weeklyBreadth, float64(len(ins)))
+		}
+		meanBreadth, stdBreadth := meanStd(weeklyBreadth)
+		if stdBreadth <= 0 {
+			stdBreadth = 1e-9
+		}
+		currentBreadthPerWeek := float64(len(currentInsiders)) / currentWeeks
+		breadthZ := clampZ((currentBreadthPerWeek - meanBreadth) / stdBreadth)
+
+		// --- Sub-signal 3: Acceleration (frequency ratio) ---
+		baselineFreqPerWeek := float64(len(baselineWeeklyVol)) / baselineWeeks
+		currentFreqPerWeek := 0.0
+		if len(currentTxs) > 0 {
+			// Count distinct weeks with activity in the current window.
+			cwWeeks := make(map[string]bool)
+			for _, tx := range currentTxs {
+				cwWeeks[isoWeek(tx.date)] = true
+			}
+			currentFreqPerWeek = float64(len(cwWeeks)) / currentWeeks
+		}
+		accelScore := 0.0
+		if baselineFreqPerWeek > 0 {
+			accelScore = currentFreqPerWeek / baselineFreqPerWeek
+		}
+
+		// --- Composite ---
+		composite := config.VolumeWeight*volumeZ +
+			config.BreadthWeight*breadthZ +
+			config.AccelerationWeight*accelScore
+
+		// Blackout dampening
 		adjusted := false
 		if isPostBlackout(currentStart) {
-			z *= 0.6 // 40% dampening for expected post-blackout clustering
+			composite *= 0.6
+			volumeZ *= 0.6
 			adjusted = true
 		}
 
-		sig.BaselineMean = meanB
-		sig.BaselineStd = stdB
-		sig.ZScore = z
-		sig.IsAnomaly = z >= stdThreshold && currentTotal > 0
+		sig.VolumeZScore = volumeZ
+		sig.BreadthZScore = breadthZ
+		sig.AccelerationScore = accelScore
+		sig.CompositeScore = composite
+		sig.BaselineMean = meanVol
+		sig.BaselineStd = stdVol
+		sig.IsAnomaly = composite >= stdThreshold && currentDollarVol > 0
 		sig.BlackoutAdjusted = adjusted
 		results = append(results, sig)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].ZScore > results[j].ZScore })
+	sort.Slice(results, func(i, j int) bool { return results[i].CompositeScore > results[j].CompositeScore })
 	return results
 }
 
-func dailyVolumeByTicker(records []models.InsiderSellRecord) []dailyVolume {
-	out := make([]dailyVolume, 0)
+func extractTxRecords(records []models.InsiderSellRecord) []txRecord {
+	out := make([]txRecord, 0, len(records))
 	for _, r := range records {
-		out = append(out, dailyVolume{
-			ticker: strings.ToUpper(r.Ticker),
-			date:   r.TransactionDate,
-			shares: r.SharesSold,
+		insider := ""
+		if r.InsiderName != nil {
+			insider = *r.InsiderName
+		}
+		dv := 0.0
+		hasDollar := false
+		if r.ValueUSD != nil && *r.ValueUSD > 0 {
+			dv = *r.ValueUSD
+			hasDollar = true
+		} else {
+			dv = r.SharesSold
+		}
+		out = append(out, txRecord{
+			ticker:    strings.ToUpper(r.Ticker),
+			insider:   insider,
+			date:      r.TransactionDate,
+			shares:    r.SharesSold,
+			dollarVal: dv,
+			hasDollar: hasDollar,
 		})
 	}
 	return out
 }
 
-// isPostBlackout returns true if the given date falls in the month immediately
-// following a typical earnings blackout month.
 func isPostBlackout(t time.Time) bool {
-	// Post-blackout months: Feb (after Jan blackout), May (after Apr),
-	// Aug (after Jul), Nov (after Oct).
 	prev := t.Month() - 1
 	if prev < 1 {
 		prev = 12
 	}
 	return earningsBlackoutMonths[prev]
+}
+
+func clampZ(z float64) float64 {
+	if z > 10 {
+		return 10
+	}
+	if z < -10 {
+		return -10
+	}
+	return z
 }
 
 func meanStd(vals []float64) (mean, std float64) {

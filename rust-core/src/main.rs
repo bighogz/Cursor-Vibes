@@ -21,7 +21,7 @@ struct AnomalyParams {
     baseline_days: i64,
     current_days: i64,
     std_threshold: f64,
-    min_baseline_points: usize,
+    min_baseline_weeks: usize,
     as_of: String,
 }
 
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 input.params.baseline_days,
                 input.params.current_days,
                 input.params.std_threshold,
-                input.params.min_baseline_points,
+                input.params.min_baseline_weeks,
                 as_of,
             );
             serde_json::to_writer(io::stdout(), &AnomalyOutput { signals })?;

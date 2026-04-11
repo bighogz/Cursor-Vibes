@@ -31,8 +31,14 @@ HUMAN_TEMPLATE = """\
 Ticker: {ticker}
 Company: {company_name}
 Sector: {sector}
-Anomaly score: {anomaly_score:.2f}
-Z-score: {z_score}
+
+Anomaly scoring (composite = weighted sum of volume + breadth + acceleration):
+  Composite score: {composite_score:.2f}
+  Volume z-score: {volume_z_score} (weekly dollar volume vs 2-year baseline)
+  Breadth z-score: {breadth_z_score} (unique insiders per week vs baseline)
+  Acceleration: {acceleration_score} (current sell frequency / baseline frequency)
+  Unique insiders in current window: {unique_insiders}
+
 Coverage window: {coverage_window}
 Trend summary: {trend_summary}
 
@@ -75,8 +81,11 @@ async def explain_anomaly(req: AnomalyInput, model: str = DEFAULT_MODEL):
             "ticker": req.ticker,
             "company_name": req.company_name,
             "sector": req.sector or "Unknown",
-            "anomaly_score": req.anomaly_score,
-            "z_score": f"{req.z_score:.2f}" if req.z_score is not None else "N/A",
+            "composite_score": req.composite_score,
+            "volume_z_score": f"{req.volume_z_score:.2f}" if req.volume_z_score is not None else "N/A",
+            "breadth_z_score": f"{req.breadth_z_score:.2f}" if req.breadth_z_score is not None else "N/A",
+            "acceleration_score": f"{req.acceleration_score:.2f}" if req.acceleration_score is not None else "N/A",
+            "unique_insiders": str(req.unique_insiders) if req.unique_insiders is not None else "N/A",
             "coverage_window": req.coverage_window or "N/A",
             "trend_summary": req.trend_summary or "N/A",
             "events_block": _format_events(req),

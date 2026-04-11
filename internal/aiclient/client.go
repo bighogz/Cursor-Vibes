@@ -20,15 +20,18 @@ type InsiderEvent struct {
 
 // ExplainRequest is the payload POSTed to the AI sidecar.
 type ExplainRequest struct {
-	Ticker         string         `json:"ticker"`
-	CompanyName    string         `json:"company_name"`
-	Sector         *string        `json:"sector,omitempty"`
-	AnomalyScore   float64        `json:"anomaly_score"`
-	ZScore         *float64       `json:"z_score,omitempty"`
-	TrendSummary   *string        `json:"trend_summary,omitempty"`
-	CoverageWindow *string        `json:"coverage_window,omitempty"`
-	SourceNotes    *string        `json:"source_notes,omitempty"`
-	RecentEvents   []InsiderEvent `json:"recent_events"`
+	Ticker            string         `json:"ticker"`
+	CompanyName       string         `json:"company_name"`
+	Sector            *string        `json:"sector,omitempty"`
+	CompositeScore    float64        `json:"composite_score"`
+	VolumeZScore      *float64       `json:"volume_z_score,omitempty"`
+	BreadthZScore     *float64       `json:"breadth_z_score,omitempty"`
+	AccelerationScore *float64       `json:"acceleration_score,omitempty"`
+	UniqueInsiders    *int           `json:"unique_insiders,omitempty"`
+	TrendSummary      *string        `json:"trend_summary,omitempty"`
+	CoverageWindow    *string        `json:"coverage_window,omitempty"`
+	SourceNotes       *string        `json:"source_notes,omitempty"`
+	RecentEvents      []InsiderEvent `json:"recent_events"`
 }
 
 // ExplainResponse is the structured explanation returned by the AI sidecar.

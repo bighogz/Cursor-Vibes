@@ -5,9 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/bighogz/Cursor-Vibes/internal/aggregator"
 	"github.com/bighogz/Cursor-Vibes/internal/aiclient"
 	"github.com/bighogz/Cursor-Vibes/internal/config"
 	"github.com/bighogz/Cursor-Vibes/internal/dashboard"
@@ -98,24 +96,13 @@ func buildAIPayload(c *models.Company, sector, ticker string) *aiclient.ExplainR
 	cw := fmt.Sprintf("%d days", config.BaselineDays+config.CurrentWindowDays)
 	req.CoverageWindow = &cw
 
-	// Compute real z-score from cached insider records (pure math, no API calls).
-	cached := aggregator.LoadCachedRecords([]string{ticker})
-	if len(cached) > 0 {
-		signals := aggregator.ComputeAnomalySignals(
-			cached,
-			config.BaselineDays,
-			config.CurrentWindowDays,
-			config.AnomalyStdThreshold,
-			time.Now(),
-		)
-		for _, s := range signals {
-			if strings.EqualFold(s.Ticker, ticker) {
-				req.AnomalyScore = s.ZScore
-				req.ZScore = &s.ZScore
-				break
-			}
-		}
+	if c.AnomalyScore != nil {
+		req.CompositeScore = *c.AnomalyScore
 	}
+	req.VolumeZScore = c.VolumeZScore
+	req.BreadthZScore = c.BreadthZScore
+	req.AccelerationScore = c.AccelerationScore
+	req.UniqueInsiders = c.UniqueInsiders
 
 	if len(c.Sources) > 0 {
 		parts := make([]string, 0, len(c.Sources))
@@ -126,10 +113,9 @@ func buildAIPayload(c *models.Company, sector, ticker string) *aiclient.ExplainR
 		req.SourceNotes = &sn
 	}
 
-	now := time.Now().Format("2006-01-02")
 	for _, ins := range c.TopInsiders {
 		evt := aiclient.InsiderEvent{
-			Date:        now,
+			Date:        "recent",
 			InsiderName: ins.Name,
 		}
 		if ins.Role != nil {

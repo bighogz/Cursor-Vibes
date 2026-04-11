@@ -15,8 +15,11 @@ class AnomalyInput(BaseModel):
     ticker: str
     company_name: str
     sector: Optional[str] = None
-    anomaly_score: float
-    z_score: Optional[float] = None
+    composite_score: float = 0.0
+    volume_z_score: Optional[float] = None
+    breadth_z_score: Optional[float] = None
+    acceleration_score: Optional[float] = None
+    unique_insiders: Optional[int] = None
     trend_summary: Optional[str] = None
     coverage_window: Optional[str] = None
     source_notes: Optional[str] = None

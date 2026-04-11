@@ -117,6 +117,25 @@ func Build(opts BuildOpts) *Result {
 	log.Printf("dashboard Build: insider_records=%d", len(insiderRecords))
 	topInsiders := topInsidersByTicker(insiderRecords)
 
+	anomalySignals := aggregator.ComputeAnomalySignals(
+		insiderRecords,
+		config.BaselineDays,
+		config.CurrentWindowDays,
+		config.AnomalyStdThreshold,
+		asOf,
+	)
+	anomalyByTicker := make(map[string]*aggregator.AnomalySignal, len(anomalySignals))
+	for i := range anomalySignals {
+		anomalyByTicker[anomalySignals[i].Ticker] = &anomalySignals[i]
+	}
+	scored := 0
+	for _, s := range anomalySignals {
+		if s.CompositeScore != 0 {
+			scored++
+		}
+	}
+	log.Printf("dashboard Build: anomaly_signals=%d scored=%d", len(anomalySignals), scored)
+
 	qStart := asOf.AddDate(0, 0, -92)
 	qStartStr := qStart.Format("2006-01-02")
 	qEndStr := asOf.Format("2006-01-02")
@@ -248,7 +267,7 @@ func Build(opts BuildOpts) *Result {
 			})
 		}
 
-		bySector[sector] = append(bySector[sector], models.Company{
+		co := models.Company{
 			Symbol:        sym,
 			Name:          c.Name,
 			Price:         pricePtr,
@@ -258,7 +277,16 @@ func Build(opts BuildOpts) *Result {
 			News:          newsItems,
 			TopInsiders:   topInsiders[sym],
 			Sources:       map[string]string{"price": priceSrc, "news": newsSrc, "insiders": insiderSrc},
-		})
+		}
+		if sig := anomalyByTicker[sym]; sig != nil && sig.CompositeScore != 0 {
+			co.AnomalyScore = &sig.CompositeScore
+			co.VolumeZScore = &sig.VolumeZScore
+			co.BreadthZScore = &sig.BreadthZScore
+			co.AccelerationScore = &sig.AccelerationScore
+			ui := sig.UniqueInsiders
+			co.UniqueInsiders = &ui
+		}
+		bySector[sector] = append(bySector[sector], co)
 	}
 
 	sectors := make([]models.SectorGroup, 0, len(bySector))

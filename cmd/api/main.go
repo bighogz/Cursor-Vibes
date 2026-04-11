@@ -226,7 +226,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 			limit = 0
 		}
 	}
-	baselineDays := clamp(parseInt(q.Get("baseline_days"), config.BaselineDays), 30, 730)
+	baselineDays := clamp(parseInt(q.Get("baseline_days"), config.BaselineDays), 30, 1095)
 	currentDays := clamp(parseInt(q.Get("current_days"), config.CurrentWindowDays), 7, 90)
 	stdThreshold := clampFloat(parseFloat(q.Get("std_threshold"), config.AnomalyStdThreshold), 1.0, 5.0)
 	asOfStr := q.Get("as_of")
@@ -259,18 +259,27 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	var signalsList []map[string]interface{}
 	var anomaliesList []map[string]interface{}
 
+	signalToMap := func(ticker string, composite, volZ, breadthZ, accel float64, isAnomaly bool, dollarVol, shares float64, insiders int, blMean, blStd float64) map[string]interface{} {
+		return map[string]interface{}{
+			"ticker":              ticker,
+			"composite_score":     composite,
+			"volume_z_score":      volZ,
+			"breadth_z_score":     breadthZ,
+			"acceleration_score":  accel,
+			"is_anomaly":          isAnomaly,
+			"current_dollar_vol":  dollarVol,
+			"current_shares_sold": shares,
+			"unique_insiders":     insiders,
+			"baseline_mean":       blMean,
+			"baseline_std":        blStd,
+		}
+	}
+
 	if rustclient.Available() {
 		signals, err := rustclient.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf.Format("2006-01-02"))
 		if err == nil {
 			for _, s := range signals {
-				m := map[string]interface{}{
-					"ticker":              s.Ticker,
-					"current_shares_sold": s.CurrentSharesSold,
-					"baseline_mean":       s.BaselineMean,
-					"baseline_std":        s.BaselineStd,
-					"z_score":             s.ZScore,
-					"is_anomaly":          s.IsAnomaly,
-				}
+				m := signalToMap(s.Ticker, s.CompositeScore, s.VolumeZScore, s.BreadthZScore, s.AccelerationScore, s.IsAnomaly, s.CurrentDollarVol, s.CurrentSharesSold, s.UniqueInsiders, s.BaselineMean, s.BaselineStd)
 				signalsList = append(signalsList, m)
 				if s.IsAnomaly {
 					anomaliesList = append(anomaliesList, m)
@@ -281,14 +290,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	if len(signalsList) == 0 {
 		goSignals := aggregator.ComputeAnomalySignals(records, baselineDays, currentDays, stdThreshold, asOf)
 		for _, s := range goSignals {
-			m := map[string]interface{}{
-				"ticker":              s.Ticker,
-				"current_shares_sold": s.CurrentSharesSold,
-				"baseline_mean":       s.BaselineMean,
-				"baseline_std":        s.BaselineStd,
-				"z_score":             s.ZScore,
-				"is_anomaly":          s.IsAnomaly,
-			}
+			m := signalToMap(s.Ticker, s.CompositeScore, s.VolumeZScore, s.BreadthZScore, s.AccelerationScore, s.IsAnomaly, s.CurrentDollarVol, s.CurrentSharesSold, s.UniqueInsiders, s.BaselineMean, s.BaselineStd)
 			signalsList = append(signalsList, m)
 			if s.IsAnomaly {
 				anomaliesList = append(anomaliesList, m)
