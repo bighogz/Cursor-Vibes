@@ -43,13 +43,15 @@ See also: [docs/decisions/0001-why-go-api.md](decisions/0001-why-go-api.md)
 
 ### Rust binary for anomaly detection
 
-Anomaly detection is z-score math over arrays. It could run in Go. Rust was chosen to:
+Anomaly detection is z-score math over a few hundred tickers. The compute does not
+justify Rust. Rust was chosen to validate two integration patterns under a real build
+constraint:
 
-- Enforce a clean subprocess boundary (JSON over stdin/stdout, no shared memory)
-- Provide an extension point for heavier compute (streaming anomalies, WASM)
+- The wazero WASM execution path (compile Rust to `wasm32-wasip1`, run in-process from Go)
+- The subprocess fallback (JSON over stdin/stdout, no shared memory)
 
 The Go fallback (`internal/aggregator`) runs the identical algorithm, so the Rust binary
-is never a hard dependency.
+is never a hard dependency. The value is the boundary, not the performance.
 
 See also: [docs/decisions/0002-why-rust-binary.md](decisions/0002-why-rust-binary.md)
 

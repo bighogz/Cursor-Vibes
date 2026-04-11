@@ -9,12 +9,24 @@ Built with **Go**, **Rust**, a **React** frontend, and a **Python** AI sidecar.
 
 ---
 
+## Why This Problem
+
+SEC Form 4 filings are one of the few non-synthetic signals of privileged access behavior
+in public markets. Detecting anomalous insider selling — unusual volume, unusual timing,
+unusual actors relative to a baseline — is structurally identical to detecting anomalous
+privileged access in an enterprise environment. The data domain is finance; the mental
+model is security: baseline a population, flag deviations, explain them without speculation.
+
+---
+
 ## Design Principles
 
 - **Fast feedback.** `make demo` builds, starts, samples, and writes output — one command,
   under a minute.
 - **Security from the start.** Input validation, auth, logging, and dependency scanning
-  ship with the first commit, not after.
+  ship with the first commit, not after. Retrofitting controls is how real vulnerabilities
+  happen; the CI pipeline enforces SAST, SCA, secret scanning, and SBOM generation on
+  every push.
 - **Graceful degradation.** Rust wasm module missing? Subprocess fallback. Native binary
   missing? Go fallback. FMP rate-limited? Yahoo takes over. Cache stale? Rebuild on demand.
 
@@ -478,6 +490,16 @@ make checksums      # SHA256 sums for bin/ artifacts
 make deps           # go mod download + npm install
 make clean          # Remove bin/, rust-core/target/, frontend/dist/, out/
 ```
+
+---
+
+## Known Limitations
+
+| Limitation | Impact | What would fix it |
+|---|---|---|
+| **10b5-1 plan trades** | A meaningful fraction of flagged anomalies are plan-governed sells — anomalous by volume, not by intent. The system cannot distinguish pre-scheduled liquidation from discretionary selling. | Cross-reference SEC Form 144 filings or a plan disclosure feed. Neither is publicly available in structured form. |
+| **EDGAR coverage gaps** | Free EDGAR backfill covers ~200 of 503 S&P 500 companies per build. Companies with no recent Form 4 filings show no insider data. | Paid APIs (FMP, SEC-API, EODHD) fill the gaps. Coverage grows across builds via the unified disk cache. |
+| **LLM latency** | Local Ollama inference on `qwen3.5` takes 1–3 minutes per explanation on consumer hardware. | A smaller model, quantization, or cloud inference would reduce latency at the cost of privacy or accuracy. |
 
 ---
 
