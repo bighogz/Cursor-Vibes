@@ -210,7 +210,7 @@ prices, trends, and news without a key.
    export LANGSMITH_API_KEY="lsv2_pt_..."   # from https://smith.langchain.com/settings
    export LANGSMITH_TRACING=true
    export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-   export LANGSMITH_PROJECT=cursor-vibes
+   export LANGSMITH_PROJECT=500-sketchpad
    export OLLAMA_MODEL=qwen3.5
    ai/.venv/bin/uvicorn ai.app:app --port 8001
    ```
@@ -241,7 +241,7 @@ prices, trends, and news without a key.
 | `OLLAMA_MODEL` | `qwen3.5` | Ollama model for anomaly explanations (sidecar-side) |
 | `LANGSMITH_API_KEY` | *(optional)* | LangSmith API key for LLM tracing (`lsv2_pt_...`) |
 | `LANGSMITH_TRACING` | `false` | Set `true` to enable LangSmith trace export |
-| `LANGSMITH_PROJECT` | `cursor-vibes` | LangSmith project name for trace grouping |
+| `LANGSMITH_PROJECT` | `500-sketchpad` | LangSmith project name for trace grouping |
 | `PORT` | `8000` | HTTP listen port |
 
 See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the full security-impact analysis of every setting.
@@ -272,8 +272,10 @@ For each S&P 500 ticker:
 2. **Current window** — Last *N* days (default 30); compute average daily sell volume.
 3. **Signal** — Flag when current average exceeds `baseline_mean + Z × baseline_std` (default Z = 2.0).
 
-The Rust binary (`vibes-anomaly anomaly`) handles this computation when available.
-Otherwise, the identical algorithm runs in Go (`internal/aggregator`).
+Z-score over a few hundred tickers doesn't need Rust. The Rust binary exists to validate
+the wazero WASM execution path and the subprocess fallback pattern under a real build
+constraint — the value is the boundary, not the performance. The identical algorithm
+runs in Go (`internal/aggregator`) as the default fallback.
 
 ```bash
 # CLI scan
@@ -327,7 +329,7 @@ OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
 export LANGSMITH_API_KEY="lsv2_pt_..."
 export LANGSMITH_TRACING=true
 export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-export LANGSMITH_PROJECT=cursor-vibes
+export LANGSMITH_PROJECT=500-sketchpad
 OLLAMA_MODEL=qwen3.5 ai/.venv/bin/uvicorn ai.app:app --port 8001
 ```
 
