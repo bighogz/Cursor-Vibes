@@ -62,6 +62,25 @@ See also: [docs/decisions/0002-why-rust-binary.md](decisions/0002-why-rust-binar
 - **Tradeoff accepted:** No distributed invalidation, no atomic writes.
   For a single-binary deployment, this is fine.
 
+### Python sidecar instead of Go-native LLM
+
+The AI explanation feature could call Ollama directly from Go. A separate Python
+sidecar was chosen to enforce four boundaries:
+
+| Boundary | What it buys |
+|---|---|
+| **Go assembles context, Python owns the LLM** | Go stays free of AI dependencies. Prompt logic, model config, and response validation live in one place (LangChain + Pydantic). |
+| **React talks only to Go** | The frontend has no knowledge of the Python service. Swapping the LLM backend requires zero frontend changes. |
+| **Ollama runs locally** | No data leaves the machine. No cloud LLM costs, no API key for inference. |
+| **LangSmith traces the LLM path** | Every prompt, raw output, and latency metric is inspectable. Tracing is opt-in via environment variables — no code changes. |
+
+The Go proxy endpoint (`/api/ai/explain-anomaly`) pulls structured context from the
+in-memory dashboard store (company, sector, trend, insider events) and forwards it to
+the sidecar. Latency is pure LLM inference; the Go side adds microseconds.
+
+**Tradeoff accepted:** An extra process to manage. Mitigated by making the sidecar
+fully optional — if it's down, the rest of the dashboard works normally.
+
 ### React SPA instead of server-rendered HTML
 
 The dashboard is data-dense (500 rows, sparklines, drawers, keyboard navigation).
