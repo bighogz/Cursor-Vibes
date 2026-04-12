@@ -94,18 +94,6 @@ export function DetailDrawer({
               <span className="text-accent-hover font-semibold text-sm">
                 {c.symbol}
               </span>
-              {c.change_pct != null && (
-                <span
-                  className={cn(
-                    "inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-medium tabular-nums",
-                    (c.change_pct ?? 0) >= 0
-                      ? "bg-positive-dim text-positive"
-                      : "bg-negative-dim text-negative"
-                  )}
-                >
-                  {fmtPct(c.change_pct)}
-                </span>
-              )}
               {trendPct != null && (
                 <span
                   className={cn(
