@@ -115,7 +115,7 @@ export function DataTable({
           <tr className="border-b border-line">
             <Th className="w-[72px] pl-5">Symbol</Th>
             <Th className="w-[14%]">Company</Th>
-            <Th className="w-[110px] text-right">Price</Th>
+            <Th className="w-[80px] text-right">Price</Th>
             <Th className="w-[180px]">{TREND_LABELS[trendPeriod]}</Th>
             <Th className="w-[200px]">Recent News</Th>
             <Th className="min-w-[170px]">Insider Activity</Th>
@@ -240,25 +240,9 @@ const CompanyRow = memo(function CompanyRow({
         </span>
       </td>
 
-      {/* Price + Change */}
-      <td className="px-3 py-2.5 text-right">
-        <div className="flex flex-col items-end gap-0.5">
-          <span className="tabular-nums font-medium">
-            {c.price ? fmtPrice(c.price) : <Muted />}
-          </span>
-          {c.change_pct != null && (
-            <span
-              className={cn(
-                "inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-medium tabular-nums",
-                c.change_pct >= 0
-                  ? "bg-positive-dim text-positive"
-                  : "bg-negative-dim text-negative"
-              )}
-            >
-              {fmtPct(c.change_pct)}
-            </span>
-          )}
-        </div>
+      {/* Price */}
+      <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+        {c.price ? fmtPrice(c.price) : <Muted />}
       </td>
 
       {/* Trend */}
@@ -367,7 +351,7 @@ function SkeletonTable() {
           <tr className="border-b border-line">
             <th className="px-5 py-2 w-[72px]" />
             <th className="px-3 py-2 w-[14%]" />
-            <th className="px-3 py-2 w-[110px]" />
+            <th className="px-3 py-2 w-[80px]" />
             <th className="px-3 py-2 w-[180px]" />
             <th className="px-3 py-2 w-[200px]" />
             <th className="px-3 py-2" />
@@ -383,7 +367,7 @@ function SkeletonTable() {
                 <div className="h-3.5 w-32 bg-surface-2 rounded animate-pulse" />
               </td>
               <td className="px-3 py-3">
-                <div className="h-8 w-16 bg-surface-2 rounded animate-pulse ml-auto" />
+                <div className="h-3.5 w-14 bg-surface-2 rounded animate-pulse ml-auto" />
               </td>
               <td className="px-3 py-3">
                 <div className="h-6 w-24 bg-surface-2 rounded animate-pulse" />
