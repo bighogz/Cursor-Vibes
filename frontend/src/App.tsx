@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ToastProvider } from "./context/toast-context";
 import { AppShell } from "./components/AppShell";
 import { Dashboard } from "./pages/Dashboard";
-import { Scan } from "./pages/Scan";
 import { Settings } from "./pages/Settings";
 
 export default function App() {
@@ -12,7 +11,6 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<Dashboard />} />
-            <Route path="scan" element={<Scan />} />
             <Route path="settings" element={<Settings />} />
             <Route
               path="*"

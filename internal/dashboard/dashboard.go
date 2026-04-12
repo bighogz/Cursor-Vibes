@@ -172,16 +172,16 @@ func Build(opts BuildOpts) *Result {
 
 			var news []map[string]interface{}
 			if useYahooForQuotes {
-				news = yahooClient.GetNews(sym, 2)
+				news = yahooClient.GetNews(sym, 3)
 			} else {
-				news = fmpClient.GetNews(sym, 2)
+				news = fmpClient.GetNews(sym, 3)
 				if len(news) == 0 {
-					news = yahooClient.GetNews(sym, 2)
+					news = yahooClient.GetNews(sym, 3)
 				}
 			}
 			formatted := make([]map[string]interface{}, 0)
 			for j, n := range news {
-				if j >= 2 {
+				if j >= 3 {
 					break
 				}
 				title := getStr(n, "title", "url")

@@ -1,25 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "../lib/cn";
 import {
   IconDashboard,
-  IconAlert,
   IconSettings,
   IconChevronDown,
   IconCommand,
 } from "./icons";
 import type { TrendKey } from "../types/dashboard";
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: ReactNode;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: <IconDashboard size={16} /> },
-  { to: "/scan", label: "Anomaly Scan", icon: <IconAlert size={16} /> },
-];
 
 const TREND_OPTIONS: { key: TrendKey; label: string }[] = [
   { key: "daily", label: "1D" },
@@ -55,9 +43,9 @@ export function SidebarNav({
       <div className="h-12 flex items-center px-4 border-b border-line">
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 rounded bg-accent flex items-center justify-center">
-            <span className="text-white text-2xs font-semibold">V</span>
+            <span className="text-white text-2xs font-bold">5</span>
           </div>
-          <span className="text-[13px] font-semibold text-content">Vibes</span>
+          <span className="text-[13px] font-semibold text-content">500-sketchpad</span>
         </div>
       </div>
 
@@ -78,24 +66,21 @@ export function SidebarNav({
       {/* Primary nav */}
       <nav className="mt-2 px-2 flex-1 overflow-y-auto" aria-label="Main">
         <div className="space-y-0.5">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] transition-colors",
-                  isActive
-                    ? "bg-accent-dim text-accent-hover font-medium"
-                    : "text-content-secondary hover:text-content hover:bg-surface-2"
-                )
-              }
-            >
-              {item.icon}
-              {item.label}
-            </NavLink>
-          ))}
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[13px] transition-colors",
+                isActive
+                  ? "bg-accent-dim text-accent-hover font-medium"
+                  : "text-content-secondary hover:text-content hover:bg-surface-2"
+              )
+            }
+          >
+            <IconDashboard size={16} />
+            Dashboard
+          </NavLink>
         </div>
 
         {/* Trend period (only on dashboard) */}

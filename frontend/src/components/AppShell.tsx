@@ -151,11 +151,9 @@ export function AppShell() {
         <header className="h-12 flex items-center justify-between px-5 border-b border-line flex-shrink-0">
           <div className="flex items-center gap-3">
             <h1 className="text-[13px] font-medium text-content">
-              {location.pathname === "/scan"
-                ? "Anomaly Scan"
-                : location.pathname === "/settings"
-                  ? "Settings"
-                  : "S&P 500 Dashboard"}
+              {location.pathname === "/settings"
+                ? "Settings"
+                : "S&P 500 Dashboard"}
             </h1>
             {data && location.pathname === "/" && (
               <span className="text-2xs text-content-muted tabular-nums">

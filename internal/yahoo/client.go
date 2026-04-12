@@ -96,6 +96,24 @@ func (c *Client) GetQuote(symbols []string) []map[string]interface{} {
 	if _, err := ensureYFC(); err == nil {
 		results := c.batchQuoteYFC(norm)
 		if len(results) > 0 {
+			got := make(map[string]bool, len(results))
+			for _, r := range results {
+				if sym, ok := r["symbol"].(string); ok {
+					got[sym] = true
+					got[toYahooSymbol(sym)] = true
+				}
+			}
+			var missing []string
+			for _, s := range norm {
+				if !got[s] && !got[fromYahooSymbol(s)] {
+					missing = append(missing, s)
+				}
+			}
+			if len(missing) > 0 {
+				log.Printf("yahoo: retrying %d missing symbols via HTTP fallback", len(missing))
+				extra := c.quoteHTTPFallback(missing)
+				results = append(results, extra...)
+			}
 			return results
 		}
 	}

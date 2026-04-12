@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { fmtPrice, fmtPct, fmtShares, fmtValue } from "../lib/format";
-import { Sparkline } from "./Sparkline";
+import { PriceChart } from "./PriceChart";
 import { IconX, IconExternalLink } from "./icons";
 import type { AnomalyExplanation, Company, TrendKey } from "../types/dashboard";
 
@@ -18,15 +18,17 @@ interface Props {
   onClose: () => void;
 }
 
-export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }: Props) {
+export function DetailDrawer({
+  company: c,
+  trendPeriod = "quarterly",
+  onClose,
+}: Props) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  // Focus trap: focus the drawer on mount
   useEffect(() => {
     drawerRef.current?.focus();
   }, [c.symbol]);
 
-  // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -45,12 +47,12 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
   const isUp = (trendPct ?? 0) >= 0;
   const hasNews = c.news && c.news.length > 0;
   const hasInsiders = c.top_insiders && c.top_insiders.length > 0;
+  const trendDesc = TREND_LABELS[trendPeriod] ?? "";
 
   const [explanation, setExplanation] = useState<AnomalyExplanation | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  // Reset AI state when switching companies
   useEffect(() => {
     setExplanation(null);
     setAiError(null);
@@ -104,6 +106,16 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
                   {fmtPct(c.change_pct)}
                 </span>
               )}
+              {trendPct != null && (
+                <span
+                  className={cn(
+                    "text-2xs font-medium tabular-nums",
+                    isUp ? "text-positive" : "text-negative"
+                  )}
+                >
+                  {fmtPct(trendPct)} {trendDesc}
+                </span>
+              )}
             </div>
             <p className="text-xs text-content-secondary truncate mt-0.5">
               {c.name}
@@ -124,26 +136,19 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
         {/* Price */}
         <Section title="Price">
           {c.price ? (
-            <div className="flex items-baseline gap-3">
-              <span className="text-2xl font-semibold tabular-nums text-content">
-                {fmtPrice(c.price)}
-              </span>
-              {c.sources?.price && (
-                <span className="text-2xs text-content-muted">
-                  via {c.sources.price}
-                </span>
-              )}
-            </div>
+            <span className="text-2xl font-semibold tabular-nums text-content">
+              {fmtPrice(c.price)}
+            </span>
           ) : (
             <span className="text-sm text-content-muted">Not available</span>
           )}
         </Section>
 
-        {/* Trend */}
-        <Section title={`Price Trend (${TREND_LABELS[trendPeriod]})`}>
+        {/* Price Trend chart + period selector */}
+        <Section title="Price Trend">
           {trendPct != null ? (
             <div>
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-3 mb-3">
                 <span
                   className={cn(
                     "text-lg font-semibold tabular-nums",
@@ -152,15 +157,15 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
                 >
                   {fmtPct(trendPct)}
                 </span>
-                <span className="text-2xs text-content-muted">{TREND_LABELS[trendPeriod]}</span>
+                <span className="text-2xs text-content-muted">{trendDesc}</span>
               </div>
               {trendCloses && trendCloses.length >= 2 && (
                 <div className="bg-surface-0 rounded-lg p-3 border border-line">
-                  <Sparkline
+                  <PriceChart
                     data={trendCloses}
                     positive={isUp}
                     width={340}
-                    height={80}
+                    height={110}
                   />
                 </div>
               )}
@@ -174,7 +179,7 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
         <Section title="Recent News">
           {hasNews ? (
             <div className="space-y-2">
-              {c.news!.map((n, i) => (
+              {c.news!.slice(0, 3).map((n, i) => (
                 <a
                   key={i}
                   href={n.url}
@@ -257,23 +262,7 @@ export function DetailDrawer({ company: c, trendPeriod = "quarterly", onClose }:
           )}
         </Section>
 
-        {/* Sources */}
-        {c.sources && (
-          <Section title="Data Sources">
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(c.sources).map(([k, v]) => (
-                <span
-                  key={k}
-                  className="text-2xs bg-surface-0 border border-line rounded px-2 py-1 text-content-muted"
-                >
-                  {k}: <span className="text-content-secondary">{v}</span>
-                </span>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* AI Anomaly Explanation — hidden until user clicks */}
+        {/* AI Anomaly Explanation */}
         {explanation ? (
           <Section title="AI Anomaly Explanation">
             <div className="space-y-3">
