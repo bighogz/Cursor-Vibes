@@ -64,10 +64,10 @@ make build                   # Go API + Rust binary + React frontend
 │  React SPA  (frontend/)                              │
 │  ├─ AppShell  (sidebar + topbar + content)           │
 │  ├─ DataTable (keyboard nav, sector groups)          │
-│  ├─ DetailDrawer (price, sparkline, news, insiders,  │
-│  │                AI anomaly explanation)             │
+│  ├─ DetailDrawer (price, price chart w/ axes, news,   │
+│  │                insiders, AI anomaly explanation)   │
 │  ├─ CommandPalette (⌘K fuzzy search)                 │
-│  └─ Anomaly Scan page + Settings page                │
+│  └─ Settings page                                    │
 ├──────────────────────────────────────────────────────┤
 │  Go API  (cmd/api) — port 8000                       │
 │  ├─ Dashboard builder → prices, trends, news         │
@@ -104,8 +104,8 @@ make build                   # Go API + Rust binary + React frontend
 | `internal/yahoo` | Go | Yahoo Finance client (go-yfinance + HTTP fallback) |
 | `internal/fmp` | Go | Financial Modeling Prep API client |
 | `internal/dashboard` | Go | Dashboard data assembly, sparkline sampling |
-| `internal/trend` | Go | Quarterly trend (linear regression, fallback) |
-| `internal/aggregator` | Go | Z-score anomaly detection with blackout-period awareness |
+| `internal/trend` | Go | Multi-period trend computation (1D / 1W / 1M / 3M) |
+| `internal/aggregator` | Go | Composite anomaly scoring (volume + breadth + acceleration) |
 | `internal/rustclient` | Go | Wasm (wazero) or subprocess bridge to Rust |
 | `internal/cache` | Go | Pluggable: `DashboardStore` interface → FileStore or SQLiteStore |
 | `internal/otel` | Go | OpenTelemetry tracing (stdout exporter, swap for OTLP) |
@@ -121,12 +121,12 @@ For *why* this shape, see [docs/design.md](docs/design.md).
 
 The UI is a Linear-inspired React SPA:
 
-- **Sidebar** — Navigation + collapsible sector filter groups
+- **Sidebar** — Navigation, trend period selector (1D / 1W / 1M / 3M), collapsible sector filters
 - **DataTable** — Dense rows with sector headers, prices, sparklines, news, insider sellers
-- **DetailDrawer** — Slide-in panel on row click (deep-linkable via `?stock=AAPL`), with "Explain Anomaly" button for LLM analysis
+- **DetailDrawer** — Slide-in panel on row click (deep-linkable via `?stock=AAPL`), with price chart (Y-axis labels, grid lines), 3 recent news items, insider table, and "Explain Anomaly" button for LLM analysis
 - **CommandPalette** — `⌘K` / `Ctrl+K` fuzzy search across stocks and actions
 - **Keyboard navigation** — `j`/`k` move focus, `Enter` opens drawer, `Esc` closes
-- **Pages** — Dashboard, Anomaly Scan (with configurable params), Settings
+- **Pages** — Dashboard, Settings
 
 Development (with hot reload):
 
@@ -266,20 +266,21 @@ See [docs/security/secure-defaults.md](docs/security/secure-defaults.md) for the
 
 ## Anomaly Detection
 
-For each S&P 500 ticker:
+For each S&P 500 ticker, a **composite anomaly score** combines three sub-signals:
 
-1. **Baseline** — Historical window (default 365 days) of daily insider sell volume; compute mean and standard deviation.
-2. **Current window** — Last *N* days (default 30); compute average daily sell volume.
-3. **Signal** — Flag when current average exceeds `baseline_mean + Z × baseline_std` (default Z = 2.0).
+1. **Volume z-score** (weight 0.4) — Weekly dollar volume of insider sells vs. a 2-year baseline, aggregated into weekly buckets to smooth sparse filings.
+2. **Breadth z-score** (weight 0.3) — Unique insiders selling per week vs. baseline. A single insider dumping stock is different from five executives selling the same week.
+3. **Acceleration score** (weight 0.3) — Current sell frequency as a ratio of baseline frequency. Detects tempo changes even when absolute volume stays moderate.
 
-Z-score over a few hundred tickers doesn't need Rust. The Rust binary exists to validate
-the wazero WASM execution path and the subprocess fallback pattern under a real build
-constraint — the value is the boundary, not the performance. The identical algorithm
-runs in Go (`internal/aggregator`) as the default fallback.
+Sub-signal z-scores are clamped to [-10, 10] to prevent degenerate values when baseline variance is near zero. A composite score above the configured threshold (default 2.0) flags the ticker as anomalous.
+
+The Rust binary mirrors this logic to validate the wazero WASM execution path and
+subprocess fallback pattern — the value is the boundary, not the performance.
+The identical algorithm runs in Go (`internal/aggregator`) as the default fallback.
 
 ```bash
 # CLI scan
-./bin/scan --baseline-days 365 --current-days 30 --std-threshold 2.5 --list-all-signals
+./bin/scan --baseline-days 730 --current-days 30 --std-threshold 2.5 --list-all-signals
 ```
 
 ---
@@ -342,14 +343,14 @@ The AI sidecar is optional. If it's not running, the "Explain Anomaly" button re
 
 The dashboard shows all S&P 500 companies grouped by GICS sector:
 
-- **Price** — Current stock price (Yahoo Finance)
-- **Change** — Daily percentage change (green/red badge)
-- **Quarterly Trend** — 13-week return with inline SVG sparkline
-- **News** — Recent headlines from Yahoo search
+- **Price** — Current stock price (Yahoo Finance, with HTTP fallback for failed tickers)
+- **Trend** — Configurable period (1D / 1W / 1M / 3M) with inline SVG sparkline and percentage
+- **News** — Recent headline from Yahoo search
 - **Top Insider Sellers** — Name + shares sold from SEC Form 4 filings (primary), FMP, and EODHD
 
-Click any row to open the detail drawer with expanded sparkline, full news list,
-and insider table. Selection is preserved in the URL (`?stock=AAPL`).
+Click any row to open the detail drawer with a price chart (Y-axis labels, grid lines),
+3 recent news items, and insider table. Selection is preserved in the URL (`?stock=AAPL`).
+Trend period is URL-persisted too (`?trend=weekly`).
 
 ---
 
@@ -432,14 +433,14 @@ docs/
     threat-model.md      SSDF + 800-53 controls matrix, threat model
     secure-defaults.md   All config settings with security impact
 frontend/                React + TypeScript + Tailwind SPA
-  src/components/        AppShell, SidebarNav, DataTable, DetailDrawer, CommandPalette
-  src/pages/             Dashboard, Scan, Settings
+  src/components/        AppShell, SidebarNav, DataTable, DetailDrawer, PriceChart, CommandPalette
+  src/pages/             Dashboard, Settings
   src/lib/               API client, formatters
 cmd/api/                 Go HTTP server (dashboard, health, scan, AI proxy)
 cmd/scan/                Go CLI (anomaly scanner)
 internal/
   aiclient/              Go client for the Python AI sidecar
-  aggregator/            Z-score anomaly detection (Go fallback)
+  aggregator/            Composite anomaly scoring (Go fallback)
   cache/                 File-based JSON cache
   config/                Environment loading (sync.Once)
   dashboard/             Dashboard builder
@@ -455,7 +456,7 @@ internal/
   yahoo/                 Yahoo Finance client (go-yfinance)
 rust-core/
   src/main.rs            CLI: anomaly + trend subcommands
-  src/anomaly.rs         Z-score detection
+  src/anomaly.rs         Composite anomaly scoring
   src/trend.rs           Quarterly trend (linear regression)
   src/models.rs          InsiderSellRecord
 scripts/
